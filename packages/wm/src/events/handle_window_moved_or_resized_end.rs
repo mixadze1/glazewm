@@ -1,6 +1,7 @@
 use anyhow::Context;
 use wm_common::{
-  try_warn, FullscreenStateConfig, TilingDirection, WindowState,
+  try_warn, ActiveDragOperation, FullscreenStateConfig, TilingDirection,
+  WindowState,
 };
 use wm_platform::{LengthValue, Point, Rect};
 
@@ -131,6 +132,29 @@ pub fn handle_window_moved_or_resized_end(
       }
     }
     WindowContainer::TilingWindow(window) => {
+      if active_drag.operation == Some(ActiveDragOperation::Move) {
+        window.set_active_drag(None);
+        if window.native().is_maximized()? {
+          let fullscreen = update_window_state(
+            window.clone().into(),
+            WindowState::Fullscreen(FullscreenStateConfig {
+              maximized: true,
+              ..config
+                .value
+                .window_behavior
+                .state_defaults
+                .fullscreen
+                .clone()
+            }),
+            state,
+            config,
+          )?;
+          state.pending_sync.dequeue_container_from_redraw(fullscreen);
+          return Ok(());
+        }
+        state.pending_sync.queue_container_to_redraw(window.clone());
+        return Ok(());
+      }
       tracing::info!(
         "Tiling window move/resize ended: {}",
         window.as_window_container()?
@@ -191,6 +215,78 @@ fn drop_as_tiling_window(
     config,
   )?;
 
+  place_tiling_window(
+    &moved_window,
+    &mouse_pos,
+    &mouse_workspace,
+    state,
+    config,
+  )?;
+  Ok(moved_window)
+}
+
+pub(crate) fn preview_tiling_drag(
+  window: &WindowContainer,
+  state: &mut WmState,
+  config: &UserConfig,
+) -> anyhow::Result<()> {
+  let cursor = state.dispatcher.cursor_position()?;
+  preview_tiling_drag_at(window, &cursor, state, config)
+}
+
+fn preview_tiling_drag_at(
+  window: &WindowContainer,
+  cursor: &Point,
+  state: &mut WmState,
+  config: &UserConfig,
+) -> anyhow::Result<()> {
+  let Some(workspace) = state
+    .monitor_at_point(&cursor)
+    .and_then(|monitor| monitor.displayed_workspace())
+  else {
+    return Ok(());
+  };
+  // Hit-test the logical slots, never the animated native window frames.
+  if contains_with_margin(&window.to_rect()?, &cursor, 16) {
+    return Ok(());
+  }
+  let has_target = workspace
+    .descendants()
+    .filter_map(|container| container.as_window_container().ok())
+    .any(|other| {
+      other.id() != window.id()
+        && other.state() == WindowState::Tiling
+        && other
+          .to_rect()
+          .is_ok_and(|rect| contains_with_margin(&rect, &cursor, -16))
+    });
+  if !has_target && workspace.tiling_children().next().is_some() {
+    return Ok(());
+  }
+  let previous_workspace =
+    window.workspace().context("No drag workspace")?;
+  place_tiling_window(window, &cursor, &workspace, state, config)?;
+  state
+    .pending_sync
+    .queue_container_to_redraw(previous_workspace);
+  state.pending_sync.queue_container_to_redraw(workspace);
+  Ok(())
+}
+
+fn contains_with_margin(rect: &Rect, point: &Point, margin: i32) -> bool {
+  i64::from(point.x) >= i64::from(rect.left) - i64::from(margin)
+    && i64::from(point.x) <= i64::from(rect.right) + i64::from(margin)
+    && i64::from(point.y) >= i64::from(rect.top) - i64::from(margin)
+    && i64::from(point.y) <= i64::from(rect.bottom) + i64::from(margin)
+}
+
+fn place_tiling_window(
+  moved_window: &WindowContainer,
+  mouse_pos: &Point,
+  mouse_workspace: &crate::models::Workspace,
+  state: &mut WmState,
+  config: &UserConfig,
+) -> anyhow::Result<()> {
   // Get the workspace, split containers, and other windows under the
   // dragged window.
   let containers_at_pos = state
@@ -201,7 +297,7 @@ fn drop_as_tiling_window(
   // Get the deepest direction container under the dragged window.
   let target_parent: DirectionContainer = containers_at_pos
     .filter_map(|container| container.as_direction_container().ok())
-    .fold(mouse_workspace.into(), |acc, container| {
+    .fold(mouse_workspace.clone().into(), |acc, container| {
       if container.ancestors().count() > acc.ancestors().count() {
         container
       } else {
@@ -222,7 +318,7 @@ fn drop_as_tiling_window(
       state,
     )?;
 
-    return Ok(moved_window);
+    return Ok(());
   }
 
   let nearest_container = target_parent
@@ -286,6 +382,12 @@ fn drop_as_tiling_window(
       _ => nearest_container.index() + 1,
     };
 
+    let target_index = insertion_index(
+      moved_window.parent() == Some(target_parent.clone().into()),
+      moved_window.index(),
+      target_index,
+    );
+
     move_container_within_tree(
       &moved_window.clone().into(),
       &target_parent.clone().into(),
@@ -296,7 +398,19 @@ fn drop_as_tiling_window(
 
   state.pending_sync.queue_container_to_redraw(target_parent);
 
-  Ok(moved_window)
+  Ok(())
+}
+
+fn insertion_index(
+  same_parent: bool,
+  source: usize,
+  insertion: usize,
+) -> usize {
+  if same_parent && source < insertion {
+    insertion - 1
+  } else {
+    insertion
+  }
 }
 
 /// Represents where the window was dropped over another.
@@ -330,5 +444,175 @@ fn drop_position(mouse_pos: &Point, rect: &Rect) -> DropPosition {
     } else {
       DropPosition::Top
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use wm_common::ActiveDrag;
+  use wm_platform::Dispatcher;
+
+  use super::*;
+  use crate::{
+    commands::container::attach_container,
+    models::{Monitor, TilingWindow, Workspace},
+  };
+
+  fn setup() -> (WmState, UserConfig, Workspace, Vec<WindowContainer>) {
+    let windows: Vec<WindowContainer> =
+      (0..3).map(|_| TilingWindow::mock().call().into()).collect();
+    let workspace = Workspace::mock()
+      .tiling_containers(
+        windows
+          .iter()
+          .map(|window| window.as_tiling_container().unwrap())
+          .collect(),
+      )
+      .call();
+    let monitor =
+      Monitor::mock().workspaces(vec![workspace.clone()]).call();
+    let mut state = WmState::new(
+      Dispatcher::mock(),
+      tokio::sync::mpsc::unbounded_channel().0,
+      tokio::sync::mpsc::unbounded_channel().0,
+      tokio::sync::mpsc::unbounded_channel().0,
+    );
+    attach_container(
+      &monitor.into(),
+      &state.root_container.clone().into(),
+      None,
+    )
+    .unwrap();
+    let config = UserConfig::new(Some(
+      std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../resources/assets/sample-config.yaml"),
+    ))
+    .unwrap();
+    state.is_focus_synced = true;
+    (state, config, workspace, windows)
+  }
+
+  #[test]
+  fn live_drag_reorders_before_release_and_preserves_window_size() {
+    let (mut state, config, workspace, windows) = setup();
+    let moved = &windows[0];
+    let original_frame = moved.native_properties().frame;
+    moved.set_active_drag(Some(ActiveDrag {
+      operation: Some(ActiveDragOperation::Move),
+      is_from_floating: false,
+      initial_position: original_frame.clone(),
+    }));
+    let target = windows[2].to_rect().unwrap();
+    let cursor = Point {
+      x: target.right - 30,
+      y: target.center_point().y,
+    };
+    preview_tiling_drag_at(moved, &cursor, &mut state, &config).unwrap();
+    assert_eq!(moved.index(), 2);
+    assert!(moved.active_drag().is_some());
+    assert_eq!(moved.native_properties().frame, original_frame);
+    for _ in 0..20 {
+      preview_tiling_drag_at(moved, &cursor, &mut state, &config).unwrap();
+    }
+    assert_eq!(moved.index(), 2);
+    assert_eq!(workspace.child_count(), 3);
+    let target = windows[1].to_rect().unwrap();
+    let cursor = Point {
+      x: target.left + 30,
+      y: target.center_point().y,
+    };
+    preview_tiling_drag_at(moved, &cursor, &mut state, &config).unwrap();
+    assert_eq!(moved.index(), 0);
+  }
+
+  #[test]
+  fn live_drag_can_create_a_vertical_split_without_repeated_nesting() {
+    let (mut state, config, _, windows) = setup();
+    let moved = &windows[0];
+    let target = windows[1].to_rect().unwrap();
+    let cursor = Point {
+      x: target.center_point().x,
+      y: target.top + 30,
+    };
+    preview_tiling_drag_at(moved, &cursor, &mut state, &config).unwrap();
+    let parent = moved.parent().unwrap();
+    assert!(parent.as_split().is_some());
+    assert_eq!(parent.child_count(), 2);
+    for _ in 0..20 {
+      preview_tiling_drag_at(moved, &cursor, &mut state, &config).unwrap();
+    }
+    assert_eq!(moved.parent(), Some(parent));
+  }
+
+  #[test]
+  fn boundary_jitter_does_not_change_the_slot() {
+    let (mut state, config, _, windows) = setup();
+    let moved = &windows[0];
+    let slot = moved.to_rect().unwrap();
+    for offset in -15..=15 {
+      preview_tiling_drag_at(
+        moved,
+        &Point {
+          x: slot.right + offset,
+          y: slot.center_point().y,
+        },
+        &mut state,
+        &config,
+      )
+      .unwrap();
+      assert_eq!(moved.index(), 0);
+    }
+  }
+
+  #[test]
+  fn existing_config_enables_live_drag_and_allows_opting_out() {
+    let default: wm_common::WindowBehaviorConfig =
+      serde_yaml::from_str("{}").unwrap();
+    assert!(default.live_drag_reordering);
+    let disabled: wm_common::WindowBehaviorConfig =
+      serde_yaml::from_str("live_drag_reordering: false").unwrap();
+    assert!(!disabled.live_drag_reordering);
+  }
+
+  #[test]
+  fn live_drag_moves_to_an_empty_monitor_and_back() {
+    let (mut state, config, original, windows) = setup();
+    let destination = Workspace::mock().name("2".to_string()).call();
+    let monitor = Monitor::mock()
+      .bounds(Rect::from_xy(1680, 0, 1680, 1050))
+      .working_area(Rect::from_xy(1680, 0, 1680, 1000))
+      .workspaces(vec![destination.clone()])
+      .call();
+    attach_container(
+      &monitor.into(),
+      &state.root_container.clone().into(),
+      None,
+    )
+    .unwrap();
+    let moved = &windows[0];
+    preview_tiling_drag_at(
+      moved,
+      &Point { x: 1900, y: 400 },
+      &mut state,
+      &config,
+    )
+    .unwrap();
+    assert_eq!(moved.workspace().unwrap().id(), destination.id());
+    assert_eq!(destination.child_count(), 1);
+    assert_eq!(original.child_count(), 2);
+    let target = windows[1].to_rect().unwrap();
+    preview_tiling_drag_at(
+      moved,
+      &Point {
+        x: target.left + 30,
+        y: target.center_point().y,
+      },
+      &mut state,
+      &config,
+    )
+    .unwrap();
+    assert_eq!(moved.workspace().unwrap().id(), original.id());
+    assert_eq!(original.child_count(), 3);
+    assert_eq!(destination.child_count(), 0);
   }
 }

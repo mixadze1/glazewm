@@ -14,7 +14,7 @@ use crate::{
     container::{flatten_split_container, move_container_within_tree},
     window::update_window_state,
   },
-  events::handle_window_moved_or_resized_end,
+  events::{handle_window_moved_or_resized_end, preview_tiling_drag},
   models::{Monitor, NonTilingWindow, WindowContainer},
   traits::{CommonGetters, WindowGetters},
   user_config::UserConfig,
@@ -482,6 +482,20 @@ fn update_drag_state(
   // after it has been moved at least 10px from its initial position. The
   // 10px threshold is to account for small movements that may be
   // accidental.
+  if is_move
+    && window.state() == WindowState::Tiling
+    && config.value.window_behavior.live_drag_reordering
+  {
+    if frame_position
+      .center_point()
+      .distance_between(&active_drag.initial_position.center_point())
+      >= 10.0
+    {
+      preview_tiling_drag(window, state, config)?;
+    }
+    return Ok(());
+  }
+
   if is_move && !matches!(window.state(), WindowState::Floating(_)) {
     let move_distance = frame_position
       .center_point()

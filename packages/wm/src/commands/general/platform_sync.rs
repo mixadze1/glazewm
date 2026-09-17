@@ -1128,7 +1128,16 @@ fn reposition_window(
   }
 
   if window.active_drag().is_some() {
-    window.native().resize(rect.width(), rect.height())?;
+    // A live tiling preview only moves the reserved slot. The native move
+    // loop owns the dragged window's position and dimensions until
+    // release.
+    let is_live_move = window.state() == WindowState::Tiling
+      && window.active_drag().is_some_and(|drag| {
+        drag.operation == Some(wm_common::ActiveDragOperation::Move)
+      });
+    if !is_live_move {
+      window.native().resize(rect.width(), rect.height())?;
+    }
   } else {
     #[cfg(target_os = "macos")]
     window.native().set_frame(rect)?;

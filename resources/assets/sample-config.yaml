@@ -199,6 +199,9 @@ window_effects:
       opacity: "0%"
 
 window_behavior:
+  # Smoothly reorder neighboring tiles while dragging a tiled window.
+  live_drag_reordering: true
+
   # New windows are created in this state whenever possible.
   # Allowed values: 'tiling', 'floating'.
   initial_state: "tiling"

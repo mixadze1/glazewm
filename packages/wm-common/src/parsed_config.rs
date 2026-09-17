@@ -164,9 +164,11 @@ pub struct KeybindingConfig {
   pub commands: Vec<InvokeCommand>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all(serialize = "camelCase"))]
 pub struct WindowBehaviorConfig {
+  /// Reorder tiling slots while moving a tiled window with the mouse.
+  pub live_drag_reordering: bool,
   /// New windows are created in this state whenever possible.
   pub initial_state: InitialWindowState,
 
@@ -174,6 +176,16 @@ pub struct WindowBehaviorConfig {
   /// changes the defaults for when the state change commands, like
   /// `set_floating`, are used without any flags.
   pub state_defaults: WindowStateDefaultsConfig,
+}
+
+impl Default for WindowBehaviorConfig {
+  fn default() -> Self {
+    Self {
+      live_drag_reordering: true,
+      initial_state: InitialWindowState::default(),
+      state_defaults: WindowStateDefaultsConfig::default(),
+    }
+  }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
