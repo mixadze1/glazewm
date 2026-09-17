@@ -519,7 +519,15 @@ fn update_drag_state(
         .apply_delta(&window.total_border_delta()?, None);
       let actual = window.native().frame_with_shadows()?;
       if has_size_drift(&actual, &target) {
-        window.native().resize(target.width(), target.height())?;
+        use wm_platform::{
+          WindowZOrder, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSENDCHANGING,
+          SWP_NOZORDER,
+        };
+        window.native().set_window_pos(
+          &WindowZOrder::Normal,
+          &target,
+          SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSENDCHANGING | SWP_NOZORDER,
+        )?;
       }
     }
     if frame_position

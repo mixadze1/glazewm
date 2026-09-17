@@ -40,6 +40,22 @@ struct CallbackData {
   last_move_emission: Option<Instant>,
 }
 
+impl CallbackData {
+  fn accepts(
+    &mut self,
+    event_kind: MouseEventKind,
+    enabled: &[MouseEventKind],
+  ) -> bool {
+    // Subscription filters must never discard button state transitions.
+    self.pressed.update(event_kind);
+    enabled.contains(&event_kind)
+      && (event_kind != MouseEventKind::Move
+        || self.last_move_emission.is_none_or(|timestamp| {
+          timestamp.elapsed() >= Duration::from_millis(50)
+        }))
+  }
+}
+
 /// Platform-specific implementation of [`MouseListener`].
 pub(crate) struct MouseListener {
   callback_id: Option<usize>,
@@ -213,27 +229,9 @@ impl MouseListener {
       }
     };
 
-    if !enabled_events.contains(&event_kind) {
+    if !callback_data.accepts(event_kind, enabled_events) {
       return Ok(());
     }
-
-    // Throttle mouse move events so that there's a minimum of 50ms between
-    // each emission. State change events (button down/up) always get
-    // emitted.
-    let should_emit = match event_kind {
-      MouseEventKind::Move => {
-        callback_data.last_move_emission.is_none_or(|timestamp| {
-          timestamp.elapsed() >= Duration::from_millis(50)
-        })
-      }
-      _ => true,
-    };
-
-    if !should_emit {
-      return Ok(());
-    }
-
-    callback_data.pressed.update(event_kind);
 
     let mouse_event = match event_kind {
       MouseEventKind::LeftButtonDown => MouseEvent::ButtonDown {
@@ -322,5 +320,32 @@ impl Drop for MouseListener {
     if let Err(err) = self.terminate() {
       tracing::warn!("Failed to terminate mouse listener: {}", err);
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn filtered_button_down_is_preserved_in_move_events() {
+    let mut callback = CallbackData {
+      event_tx: mpsc::unbounded_channel().0,
+      pressed: PressedButtons::default(),
+      last_move_emission: None,
+    };
+    let enabled = [MouseEventKind::Move, MouseEventKind::LeftButtonUp];
+    assert!(!callback.accepts(MouseEventKind::LeftButtonDown, &enabled));
+    assert!(callback.accepts(MouseEventKind::Move, &enabled));
+    assert!(callback.pressed.contains(&MouseButton::Left));
+    callback.last_move_emission = Some(Instant::now());
+    assert!(!callback.accepts(MouseEventKind::Move, &enabled));
+    assert!(callback.pressed.contains(&MouseButton::Left));
+    assert!(callback.accepts(MouseEventKind::LeftButtonUp, &enabled));
+    assert!(!callback.pressed.contains(&MouseButton::Left));
+    assert!(!callback.accepts(MouseEventKind::RightButtonDown, &enabled));
+    assert!(callback.pressed.contains(&MouseButton::Right));
+    assert!(!callback.accepts(MouseEventKind::RightButtonUp, &enabled));
+    assert!(!callback.pressed.contains(&MouseButton::Right));
   }
 }
