@@ -352,7 +352,7 @@ fn redraw_containers(
           || state.pending_sync.is_workspace_switch_outgoing(&id)
       });
 
-      if has_ws_windows {
+      if has_ws_windows && !state.pending_sync.workspace_switch_reversed {
         let is_no_slide = ws_config.style.is_no_slide();
         let mut ws_windows: Vec<(
           uuid::Uuid,
@@ -432,10 +432,9 @@ fn redraw_containers(
                 })
                 .ok()
               });
-            // Always register incoming windows even without a surrogate so
-            // `is_frozen_by_ws_animation` is true for all of them — this
-            // prevents the real window from being uncloaked before the
-            // animation ends.
+            // Keep all incoming windows for end-of-transition cleanup.
+            // Without a usable surrogate, reveal the real window normally
+            // instead of freezing it behind an empty overlay.
             ws_windows.push((id, surrogate, true));
           } else {
             let current = state
@@ -503,6 +502,7 @@ fn redraw_containers(
 
           state.animation_manager.start_workspace_switch(
             ws_windows,
+            state.pending_sync.workspace_switch_route.clone(),
             direction, // order_direction: +1/-1
             monitor_x,
             monitor_width,
@@ -657,8 +657,12 @@ fn redraw_containers(
     let is_state_change =
       state.pending_sync.is_window_state_change(&window.id());
 
-    if is_fullscreen || window.active_drag().is_some() {
+    if window.active_drag().is_some() {
       state.animation_manager.remove_animation(&window.id());
+    } else if is_fullscreen {
+      state
+        .animation_manager
+        .remove_window_animation(&window.id());
     }
 
     #[cfg(target_os = "windows")]
@@ -667,7 +671,9 @@ fn redraw_containers(
       && (window.native().is_maximized()?
         || window.native().is_minimized()?)
     {
-      state.animation_manager.remove_animation(&window.id());
+      state
+        .animation_manager
+        .remove_window_animation(&window.id());
       window.native().restore(Some(&target_rect))?;
       window.update_native_properties(|properties| {
         properties.is_maximized = false;
@@ -823,9 +829,12 @@ fn redraw_containers(
         config,
       )
     } else {
-      // Animations are skipped for this window. Cancel any in-progress
-      // animation and its surrogate so subsequent ticks don't re-cloak it.
-      state.animation_manager.remove_animation(&window.id());
+      // A workspace transition owns its own surrogates. In particular,
+      // outgoing windows take this non-resize path to cloak the real
+      // window; cancelling the workspace entry here would kill its exit.
+      state
+        .animation_manager
+        .remove_window_animation(&window.id());
       (AnimationPositionResult::Apply(target_rect.clone()), None)
     };
 
@@ -869,8 +878,7 @@ fn redraw_containers(
 
           // Pre-position the cloaked window at its target rect so it
           // appears there when uncloaked at animation end. Posted
-          // asynchronously — the animation duration (~300 ms) is far
-          // longer than any app's message-queue processing time.
+          // asynchronously; the final handoff also checks its position.
           let is_resize_session = state
             .animation_manager
             .resize_sessions
@@ -880,15 +888,19 @@ fn redraw_containers(
               SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE,
               SWP_NOSENDCHANGING, SWP_NOZORDER,
             };
-            let _ = window.native().set_window_pos(
-              &z_order,
-              &target_rect,
-              SWP_NOZORDER
-                | SWP_FRAMECHANGED
-                | SWP_NOACTIVATE
-                | SWP_NOSENDCHANGING
-                | SWP_ASYNCWINDOWPOS,
-            );
+            if window.native().frame_with_shadows().ok().as_ref()
+              != Some(&target_rect)
+            {
+              let _ = window.native().set_window_pos(
+                &z_order,
+                &target_rect,
+                SWP_NOZORDER
+                  | SWP_FRAMECHANGED
+                  | SWP_NOACTIVATE
+                  | SWP_NOSENDCHANGING
+                  | SWP_ASYNCWINDOWPOS,
+              );
+            }
           } else {
             // Growing resize sessions (both dimensions grow): pre-position
             // the cloaked window at target asynchronously so
@@ -1085,7 +1097,11 @@ fn redraw_containers(
   // have been cloaked. This removes the double-blend that would occur if
   // the surrogate's configured opacity were set before cloaking.
   #[cfg(target_os = "windows")]
-  state.animation_manager.apply_outgoing_surrogate_opacities();
+  if state.pending_sync.workspace_switch_route.is_some()
+    && !state.pending_sync.workspace_switch_reversed
+  {
+    state.animation_manager.apply_outgoing_surrogate_opacities();
+  }
 
   Ok(())
 }

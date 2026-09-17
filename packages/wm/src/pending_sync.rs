@@ -62,6 +62,11 @@ pub struct PendingSync {
   /// place).
   workspace_switch_direction: i32,
 
+  /// Source and destination names, including empty workspaces.
+  pub(crate) workspace_switch_route: Option<(String, String)>,
+  /// Reuse the active overlays when reversing an unfinished slide.
+  pub(crate) workspace_switch_reversed: bool,
+
   /// Window IDs that just underwent a tiling/floating state change this
   /// sync cycle. Used by `platform_sync` to allow `window_move`
   /// animations across the state boundary (e.g. tiling → floating or
@@ -104,6 +109,8 @@ impl PendingSync {
     self.workspace_switch_incoming.clear();
     self.workspace_switch_outgoing.clear();
     self.workspace_switch_direction = 0;
+    self.workspace_switch_route = None;
+    self.workspace_switch_reversed = false;
     self.window_state_changes.clear();
     self.iris_switch = None;
     self.animations_suppressed = false;

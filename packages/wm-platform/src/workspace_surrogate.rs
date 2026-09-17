@@ -84,6 +84,11 @@ impl WorkspaceSurrogate {
       // exclusive.
       hwnd,
     )?;
+    if !inner.has_thumbnail() {
+      return Err(crate::Error::Platform(
+        "Workspace source has no DWM thumbnail.".into(),
+      ));
+    }
     Ok(Self {
       inner,
       rect: rect.clone(),

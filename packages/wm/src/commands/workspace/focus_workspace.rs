@@ -57,6 +57,22 @@ pub fn focus_workspace(
       .and_then(|monitor| monitor.displayed_workspace())
       .context("No workspace is currently displayed.")?;
 
+    // Reverse a return trip in place. A different destination still needs
+    // the previous handoff completed before replacing its overlays.
+    #[cfg(target_os = "windows")]
+    if target_workspace.id() != displayed_workspace.id() {
+      let reversed = state.animation_manager.reverse_workspace_switch(
+        &displayed_workspace.config().name,
+        &target_workspace.config().name,
+      );
+      if !reversed {
+        crate::animation::AnimationManager::finish_workspace_switch(
+          state, config,
+        )?;
+      }
+      state.pending_sync.workspace_switch_reversed = reversed;
+    }
+
     // Set focus to whichever window last had focus in workspace. If the
     // workspace has no windows, then set focus to the workspace itself.
     let container_to_focus = target_workspace
@@ -113,6 +129,10 @@ pub fn focus_workspace(
           config,
         );
         state.pending_sync.set_workspace_switch_direction(direction);
+        state.pending_sync.workspace_switch_route = Some((
+          displayed_workspace.config().name.clone(),
+          target_workspace.config().name.clone(),
+        ));
 
         // Mark windows on the incoming workspace to slide in. Minimized
         // windows are excluded — they have no visible content to animate
@@ -136,7 +156,9 @@ pub fn focus_workspace(
           .filter_map(|c| c.as_window_container().ok())
           .filter(|w| w.state() != WindowState::Minimized)
         {
-          state.animation_manager.remove_animation(&window.id());
+          state
+            .animation_manager
+            .remove_window_animation(&window.id());
           state
             .pending_sync
             .setup_workspace_switch_outgoing(window.id());
