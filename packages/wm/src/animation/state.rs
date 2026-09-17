@@ -40,8 +40,9 @@ pub struct WindowAnimationState {
   // Position animation.
   pub start_rect: Rect,
   pub target_rect: Rect,
-  /// A directional exit and re-entry, clipped to this monitor. The jump
-  /// between edges happens only while the thumbnail is fully off-screen.
+  /// A directional exit, clipped to this monitor. The real window is
+  /// revealed at target_rect only after the thumbnail has left the
+  /// screen.
   workspace_flight: Option<(Rect, i32)>,
 
   // Opacity animation; `None` when fade is disabled.
@@ -70,50 +71,34 @@ impl WindowAnimationState {
     }
   }
 
-  /// Adds a directional flight across the monitor edges.
+  /// Adds an exit-only flight toward the selected workspace.
   pub fn set_workspace_flight(&mut self, monitor: Rect, direction: i32) {
     if direction != 0 {
       self.workspace_flight = Some((monitor, direction.signum()));
     }
   }
 
-  // Returns the first edge, opposite entry edge, and leg distances.
-  fn flight_legs(&self) -> Option<(f32, f32, f32, f32)> {
+  fn flight_exit_rect(&self) -> Option<Rect> {
     let (monitor, direction) = self.workspace_flight.as_ref()?;
-    let left = (monitor.x()
-      - self.start_rect.width().max(self.target_rect.width()))
-      as f32;
-    let right = (monitor.x() + monitor.width()) as f32;
-    let (exit, entry) = if *direction < 0 {
-      (left, right)
+    let x = if *direction < 0 {
+      monitor.x() - self.start_rect.width()
     } else {
-      (right, left)
+      monitor.x() + monitor.width()
     };
-    Some((
-      exit,
-      entry,
-      (exit - self.start_rect.x() as f32).abs(),
-      (self.target_rect.x() as f32 - entry).abs(),
+    Some(Rect::from_xy(
+      x,
+      self.start_rect.y(),
+      self.start_rect.width(),
+      self.start_rect.height(),
     ))
   }
 
   fn rect_at_progress(&self, progress: f32) -> Rect {
-    let rect = self.start_rect.interpolate(&self.target_rect, progress);
-    let Some((exit, entry, first, second)) = self.flight_legs() else {
-      return rect;
-    };
-    let travelled = progress.clamp(0.0, 1.0) * (first + second);
-    let x = if travelled < first && first > 0.0 {
-      self.start_rect.x() as f32
-        + (exit - self.start_rect.x() as f32) * travelled / first
-    } else if second > 0.0 {
-      entry
-        + (self.target_rect.x() as f32 - entry) * (travelled - first)
-          / second
+    if let Some(exit) = self.flight_exit_rect() {
+      self.start_rect.interpolate(&exit, progress.clamp(0.0, 1.0))
     } else {
-      self.target_rect.x() as f32
-    };
-    Rect::from_xy(x.round() as i32, rect.y(), rect.width(), rect.height())
+      self.start_rect.interpolate(&self.target_rect, progress)
+    }
   }
 
   /// Sets the delay before this animation starts and returns `self`.
@@ -214,8 +199,8 @@ impl WindowAnimationState {
   /// animation. Returns `0` for opacity-only animations whose start and
   /// target rects are identical.
   fn max_travel_px(&self) -> f32 {
-    if let Some((_, _, first, second)) = self.flight_legs() {
-      return first + second;
+    if let Some(exit) = self.flight_exit_rect() {
+      return (exit.x() - self.start_rect.x()).abs() as f32;
     }
     let dx = (self.target_rect.x() - self.start_rect.x()).abs();
     let dy = (self.target_rect.y() - self.start_rect.y()).abs();
@@ -275,7 +260,7 @@ mod tests {
   use super::*;
 
   #[test]
-  fn workspace_flights_move_in_requested_direction_on_both_legs() {
+  fn workspace_flights_only_exit_without_reentering() {
     for monitor_x in [-1920, 0, 1920] {
       let monitor = Rect::from_xy(monitor_x, 0, 1920, 1080);
       let start = Rect::from_xy(monitor_x + 100, 100, 640, 480);
@@ -289,24 +274,19 @@ mod tests {
         );
         animation.set_workspace_flight(monitor.clone(), direction);
         assert_eq!(animation.rect_at_progress(0.0), start);
-        assert_eq!(animation.rect_at_progress(1.0), target);
-        let (_, _, first, second) = animation.flight_legs().unwrap();
-        let split = first / (first + second);
-        let midway_out = animation.rect_at_progress(split / 2.0);
-        let midway_in = animation.rect_at_progress((split + 1.0) / 2.0);
-        assert!((midway_out.x() - start.x()) * direction > 0);
-        assert!((target.x() - midway_in.x()) * direction > 0);
-        let before = animation.rect_at_progress(split - 0.00001);
-        let after = animation.rect_at_progress(split + 0.00001);
-        for rect in [before, after] {
-          let visible_width = (rect.right.min(monitor.right)
-            - rect.left.max(monitor.left))
-          .max(0);
-          assert!(
-            visible_width <= 1,
-            "edge swap must be outside the visible monitor"
-          );
+        let mut previous_x = start.x();
+        for frame in 1..=100 {
+          let rect = animation.rect_at_progress(frame as f32 / 100.0);
+          assert!((rect.x() - previous_x) * direction >= 0);
+          assert_eq!(rect.y(), start.y());
+          assert_eq!(rect.width(), start.width());
+          assert_eq!(rect.height(), start.height());
+          previous_x = rect.x();
         }
+        let exit = animation.rect_at_progress(1.0);
+        assert!(exit.right <= monitor.left || exit.left >= monitor.right);
+        // Native-window handoff still uses the destination layout.
+        assert_eq!(animation.target_rect, target);
       }
     }
   }
@@ -323,13 +303,13 @@ mod tests {
     animation.set_workspace_flight(Rect::from_xy(0, 0, 1920, 1080), -1);
     let now = Instant::now();
     assert_eq!(animation.eased_progress_at(now), 0.0);
-    assert!(animation.max_travel_px() > 1920.0);
+    assert_eq!(animation.max_travel_px(), 740.0);
     assert_ne!(animation.rect_at_progress(0.25), rect);
     assert_eq!(
       animation
         .current_state_at(now + Duration::from_millis(450))
         .0,
-      rect
+      Rect::from_xy(-640, 100, 640, 480)
     );
   }
 
