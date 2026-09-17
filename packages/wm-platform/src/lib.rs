@@ -251,6 +251,9 @@ impl DxgiVsyncWaiter {
     // SAFETY: `self.output` is a valid `IDXGIOutput` kept alive by the
     // `Clone`-counted reference.
     if unsafe { self.output.WaitForVBlank() }.is_err() {
+      if let Ok(mut guard) = self.last_wake.lock() {
+        *guard = None;
+      }
       return false;
     }
     let now = std::time::Instant::now();

@@ -664,6 +664,9 @@ impl AnimationManager {
               if waited {
                 *vsync_time.lock().expect("animation mutex poisoned") =
                   Some(Instant::now());
+              } else {
+                *vsync_time.lock().expect("animation mutex poisoned") =
+                  None;
               }
               waited
             };
@@ -1222,17 +1225,14 @@ impl AnimationManager {
     let lead = Duration::from_micros(
       (period_us as f64 * f64::from(1.0_f32 - VSYNC_LEAD_FRACTION)) as u64,
     );
-    Some(last_wake + lead)
+    Some((last_wake + lead).max(Instant::now()))
   }
 
   /// Returns the predictive vsync instant if available, else wall-clock
   /// now.
   #[cfg(target_os = "windows")]
   fn predictive_now(&self) -> Instant {
-    let now = Instant::now();
-    self
-      .predictive_vsync_now()
-      .map_or(now, |predicted| predicted.max(now))
+    self.predictive_vsync_now().unwrap_or_else(Instant::now)
   }
 
   /// Installs or upgrades the vsync waiter to the monitor with handle
