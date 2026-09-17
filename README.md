@@ -1,28 +1,27 @@
 <div align="center">
 
-> V3 is finally out - check out the changelog [here](https://github.com/glzr-io/GlazeWM/releases) 🔥
+> Version 4.0.0 is available: [download the Windows x64 release](https://github.com/mixadze1/glazewm_reborn/releases/latest).
 
   <br>
   <img src="./resources/assets/logo.svg" width="230" alt="GlazeWM logo" />
   <br>
 
-# GlazeWM
+# GlazeWM Reborn
 
-**A tiling window manager for Windows inspired by i3wm.**
+**A Windows-focused fork of GlazeWM with smooth workspace and window animations.**
 
-[![Discord invite][discord-badge]][discord-link]
 [![Downloads][downloads-badge]][downloads-link]
-[![Good first issues][issues-badge]][issues-link]
+[![Issues][issues-badge]][issues-link]
 
-GlazeWM lets you easily organize windows and adjust their layout on the fly by using keyboard-driven commands.
+`glazewm_reborn` builds on [GlazeWM by glzr-io](https://github.com/glzr-io/glazewm), a keyboard-driven tiling window manager inspired by i3wm. This fork adds continuous workspace transitions, animated window transfers, and layout improvements. The executable and configuration names remain compatible with GlazeWM.
 
 [Installation](#installation) •
 [Default keybindings](#default-keybindings) •
 [Config documentation](#config-documentation) •
 [FAQ](#faq) •
-[Contributing ↗](https://github.com/glzr-io/glazewm/blob/main/CONTRIBUTING.md)
+[Contributing](CONTRIBUTING.md)
 
-![Demo video][demo-video]
+![Original GlazeWM demo; see the features below for this fork's additions][demo-video]
 
 </div>
 
@@ -31,51 +30,87 @@ GlazeWM lets you easily organize windows and adjust their layout on the fly by u
 - Simple YAML configuration
 - Multi-monitor support
 - Customizable rules for specific windows
-- Easy one-click installation
+- Portable Windows x64 release with no console window for the application or watcher
 - Integration with [Zebar](https://github.com/glzr-io/zebar) as a status bar
+
+### What's new in Reborn
+
+- Smooth workspace slides that preserve window positions and motion when changing destination rapidly.
+- Visible windows on intermediate workspaces when travelling across several desktops.
+- Directional window transfers: exit toward the destination, then reveal at the new layout position.
+- Consistent sizing when moving tiled windows with directional keybindings.
+- Configurable focused-window outline and keyboard resize limits.
+- Configurable animation durations and easing curves.
 
 ## Installation
 
-**The latest version of GlazeWM is downloadable via [releases](https://github.com/glzr-io/GlazeWM/releases).** Zebar can optionally be installed as well via a checkbox during installation.
+1. Download `glazewm-v4.0.0-windows-x64.zip` from the [Reborn releases](https://github.com/mixadze1/glazewm_reborn/releases/latest).
+2. Extract the entire archive into one directory.
+3. Close any existing GlazeWM instance, then launch `glazewm.exe`.
 
-GlazeWM is also available through several package managers:
+Keep `glazewm-watcher.exe` beside the main executable. Both run without a console window; `glazewm-cli.exe` is the command-line companion. The release includes `config.example.yaml`, a license, and SHA-256 checksums. The portable build is unsigned and does not include an installer or Zebar.
 
-**Winget**
+Existing configuration is read from `%USERPROFILE%\.glzr\glazewm\config.yaml`. Back it up before adopting settings from the example. Package-manager packages named `GlazeWM` or `glazewm` belong to the upstream project and do not install this fork.
 
-```sh
-winget install GlazeWM
+### Build from source
+
+Use the Rust toolchain specified by this repository and the Windows C++ build tools. From PowerShell:
+
+```powershell
+$env:VERSION_NUMBER = '4.0.0'
+cargo build --release -p wm -p wm-cli -p wm-watcher
 ```
 
-**Chocolatey**
-
-```sh
-choco install glazewm
-```
-
-**Scoop**
-
-```sh
-scoop bucket add extras
-scoop install extras/glazewm
-```
+The executables are written to `target/release`. The main application and watcher use the Windows GUI subsystem in release builds.
 
 ## Contributing
 
 Help fix something that annoys you, or add a feature you've been wanting for a long time! Contributions are very welcome.
 
-Local development and guidelines are available in the [contributing guide](https://github.com/glzr-io/glazewm/blob/main/CONTRIBUTING.md).
+Local development and guidelines are available in the [contributing guide](CONTRIBUTING.md). Report fork-specific problems in [this repository's issues](https://github.com/mixadze1/glazewm_reborn/issues).
 
 ## Default keybindings
 
 On the first launch of GlazeWM, a default configuration can optionally be generated.
 
-Below is a cheat sheet of all available commands and their default keybindings.
+The [sample configuration](resources/assets/sample-config.yaml) is the source of truth for this fork's default bindings. The inherited cheat sheet below is a general reference; your own configuration can override it.
 
 ![Infographic](/resources/assets/cheatsheet.png)
 
 ## Config documentation
 
-The [default config](https://github.com/glzr-io/glazewm/blob/main/resources/assets/sample-config.yaml) file is generated at `%userprofile%\.glzr\glazewm\config.yaml`.
+The [default config](resources/assets/sample-config.yaml) file is generated at `%userprofile%\.glzr\glazewm\config.yaml`.
+
+### Reborn animations
+
+Merge these settings into your existing configuration rather than replacing it:
+
+```yaml
+animations:
+  workspace_switch:
+    enabled: true
+    duration_ms: 450
+    easing: ease_in_out
+    style: slide
+    direction: horizontal
+    zoom_factor: 0.0
+  window_open:
+    enabled: true
+    duration_ms: 250
+    easing: ease_in_out_cubic
+```
+
+Workspace slides use `workspace_switch.duration_ms` and `easing`. For a window transfer followed by workspace focus, the exit uses this timing, then the centered reveal uses `window_open.duration_ms` and `easing`. Set `window_open.enabled: false` to keep only the exit. The reveal is centered regardless of the style selected for ordinary new-window animations. Named easing curves and `cubic_bezier(x1, y1, x2, y2)` are supported; see the sample configuration for all options.
+
+To move the focused window and follow it, bind both commands together:
+
+```yaml
+keybindings:
+  - commands: ["move --workspace 2", "focus --workspace 2"]
+    bindings: ["alt+shift+2"]
+```
+
+The focused outline is controlled by `window_effects.focused_border_width`. Keyboard resize limits are controlled by `window_behavior.resize_respects_minimum_size`; these are separate from mouse resize constraints.
 
 To use a different config file location, you can launch the GlazeWM executable with the CLI argument `--config="..."`, like so:
 
@@ -384,10 +419,12 @@ Programs like Winlister or AutoHotkey's Window Spy can be useful for getting inf
 
 This isn't currently supported, however, the keybinding `alt+shift+p` in the default config is used to disable all other keybindings until `alt+shift+p` is pressed again.
 
-[discord-badge]: https://img.shields.io/discord/1041662798196908052.svg?logo=discord&colorB=7289DA
-[discord-link]: https://discord.gg/ud6z3qjRvM
-[downloads-badge]: https://img.shields.io/github/downloads/glzr-io/glazewm/total?logo=github&logoColor=white
-[downloads-link]: https://github.com/glzr-io/glazewm/releases
-[issues-badge]: https://img.shields.io/badge/good_first_issues-7057ff
-[issues-link]: https://github.com/orgs/glzr-io/projects/4/views/1?sliceBy%5Bvalue%5D=good+first+issue
+## Credits and license
+
+This is a fork of [glzr-io/glazewm](https://github.com/glzr-io/glazewm). Credit for the original application, logo, demo, and inherited documentation belongs to the upstream authors and contributors. Distributed under [GPL-3.0](LICENSE.md).
+
+[downloads-badge]: https://img.shields.io/github/downloads/mixadze1/glazewm_reborn/total?logo=github&logoColor=white
+[downloads-link]: https://github.com/mixadze1/glazewm_reborn/releases
+[issues-badge]: https://img.shields.io/github/issues/mixadze1/glazewm_reborn
+[issues-link]: https://github.com/mixadze1/glazewm_reborn/issues
 [demo-video]: resources/assets/demo.webp
