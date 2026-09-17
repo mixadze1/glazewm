@@ -57,20 +57,20 @@ pub fn focus_workspace(
       .and_then(|monitor| monitor.displayed_workspace())
       .context("No workspace is currently displayed.")?;
 
-    // Reverse a return trip in place. A different destination still needs
-    // the previous handoff completed before replacing its overlays.
+    // A running slide keeps all panels alive when its destination changes.
+    // Other animation styles still complete their handoff before
+    // replacement.
     #[cfg(target_os = "windows")]
     if target_workspace.id() != displayed_workspace.id() {
-      let reversed = state.animation_manager.reverse_workspace_switch(
-        &displayed_workspace.config().name,
-        &target_workspace.config().name,
-      );
-      if !reversed {
+      let continuing = state
+        .animation_manager
+        .can_retarget_workspace_switch(&displayed_workspace.config().name);
+      if !continuing {
         crate::animation::AnimationManager::finish_workspace_switch(
           state, config,
         )?;
       }
-      state.pending_sync.workspace_switch_reversed = reversed;
+      state.pending_sync.workspace_switch_continuing = continuing;
     }
 
     // Set focus to whichever window last had focus in workspace. If the

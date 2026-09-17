@@ -352,7 +352,7 @@ fn redraw_containers(
           || state.pending_sync.is_workspace_switch_outgoing(&id)
       });
 
-      if has_ws_windows && !state.pending_sync.workspace_switch_reversed {
+      if has_ws_windows || state.pending_sync.workspace_switch_continuing {
         let is_no_slide = ws_config.style.is_no_slide();
         let mut ws_windows: Vec<(
           uuid::Uuid,
@@ -373,6 +373,12 @@ fn redraw_containers(
             state.pending_sync.is_workspace_switch_outgoing(&id);
 
           if !is_incoming && !is_outgoing {
+            continue;
+          }
+
+          if state.pending_sync.workspace_switch_continuing
+            && state.animation_manager.has_workspace_switch_window(&id)
+          {
             continue;
           }
 
@@ -475,7 +481,15 @@ fn redraw_containers(
         // placing surrogates at their target and causing an
         // instant flash. Non-slide styles (fade/zoom) have no
         // slide offset so direction == 0 is fine.
-        if (has_outgoing || has_incoming)
+        if state.pending_sync.workspace_switch_continuing {
+          if let Some(route) =
+            state.pending_sync.workspace_switch_route.clone()
+          {
+            state
+              .animation_manager
+              .retarget_workspace_switch(ws_windows, route, config);
+          }
+        } else if (has_outgoing || has_incoming)
           && (direction != 0 || is_no_slide)
         {
           // Show outgoing surrogates before flushing: real windows are
@@ -1098,7 +1112,7 @@ fn redraw_containers(
   // the surrogate's configured opacity were set before cloaking.
   #[cfg(target_os = "windows")]
   if state.pending_sync.workspace_switch_route.is_some()
-    && !state.pending_sync.workspace_switch_reversed
+    && !state.pending_sync.workspace_switch_continuing
   {
     state.animation_manager.apply_outgoing_surrogate_opacities();
   }

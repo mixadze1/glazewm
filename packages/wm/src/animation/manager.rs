@@ -139,6 +139,8 @@ struct PendingSurrogateUpdate {
 /// slide animation.
 #[cfg(target_os = "windows")]
 struct WorkspaceSwitchEntry {
+  workspace_name: String,
+  panel_position: f32,
   /// Surrogate overlay that slides across the monitor each frame.
   surrogate: Option<WorkspaceSurrogate>,
   /// `true` for windows on the incoming workspace, `false` for outgoing.
@@ -153,11 +155,12 @@ struct WorkspaceSwitchEntry {
 /// panel.
 #[cfg(target_os = "windows")]
 struct WorkspaceSwitchState {
+  motion: Option<super::workspace_motion::WorkspaceMotion>,
+  /// Timestamp of the last submitted frame. A new destination keeps this
+  /// clock origin so the next frame advances immediately, without a
+  /// pause.
+  last_frame_time: Option<Instant>,
   route: Option<(String, String)>,
-  /// Progress of the last submitted frame, retained for exact reversal.
-  rendered_progress: f32,
-  /// Starting progress of the current leg after changing direction.
-  start_progress: f32,
   full_duration: Duration,
   /// All participating windows keyed by window ID.
   windows: HashMap<Uuid, WorkspaceSwitchEntry>,
@@ -733,39 +736,60 @@ impl AnimationManager {
     Ok(())
   }
 
-  /// Reuse both sets of thumbnails and mirror their progress. Swapping
-  /// roles and direction at p -> 1-p leaves every window at the same
-  /// position; subsequent frames travel back over the remaining distance.
   #[cfg(target_os = "windows")]
-  pub(crate) fn reverse_workspace_switch(
+  pub(crate) fn can_retarget_workspace_switch(&self, from: &str) -> bool {
+    self.workspace_switch.as_ref().is_some_and(|ws| {
+      ws.motion.is_some()
+        && ws
+          .route
+          .as_ref()
+          .is_some_and(|(_, destination)| destination == from)
+    })
+  }
+
+  #[cfg(target_os = "windows")]
+  pub(crate) fn has_workspace_switch_window(&self, id: &Uuid) -> bool {
+    self
+      .workspace_switch
+      .as_ref()
+      .is_some_and(|ws| ws.windows.contains_key(id))
+  }
+
+  #[cfg(target_os = "windows")]
+  pub(crate) fn retarget_workspace_switch(
     &mut self,
-    from: &str,
-    to: &str,
-  ) -> bool {
+    windows: Vec<(Uuid, Option<WorkspaceSurrogate>, bool)>,
+    route: (String, String),
+    config: &UserConfig,
+  ) {
     let Some(ws) = &mut self.workspace_switch else {
-      return false;
+      return;
     };
-    if ws.style != WorkspaceSwitchStyle::Slide
-      || !ws.route.as_ref().is_some_and(|(source, destination)| {
-        source == to && destination == from
-      })
-    {
-      return false;
-    }
-    ws.start_progress = 1.0 - ws.rendered_progress;
-    ws.rendered_progress = ws.start_progress;
-    ws.duration =
-      ws.full_duration.mul_f32((1.0 - ws.start_progress).abs());
-    ws.start_time = None;
-    ws.vsync_anchored = false;
-    ws.order_direction = -ws.order_direction;
-    if let Some((source, destination)) = &mut ws.route {
-      std::mem::swap(source, destination);
+    let Some(motion) = &mut ws.motion else {
+      return;
+    };
+    let destination =
+      config.workspace_config_index(&route.1).unwrap_or_default() as f32;
+    for (id, surrogate, is_incoming) in windows {
+      let name = if is_incoming { &route.1 } else { &route.0 };
+      ws.windows
+        .entry(id)
+        .or_insert_with(|| WorkspaceSwitchEntry {
+          workspace_name: name.clone(),
+          panel_position: config
+            .workspace_config_index(name)
+            .unwrap_or_default() as f32,
+          surrogate,
+          is_incoming,
+        });
     }
     for entry in ws.windows.values_mut() {
-      entry.is_incoming = !entry.is_incoming;
+      entry.is_incoming = entry.workspace_name == route.1;
     }
-    true
+    motion.retarget(destination);
+    ws.route = Some(route);
+    ws.start_time = ws.last_frame_time;
+    ws.duration = ws.full_duration;
   }
 
   /// Internal update, accessed through `WmState` to avoid double-borrow.
@@ -975,10 +999,9 @@ impl AnimationManager {
           None => Instant::now(),
         };
         let start = *ws.start_time.get_or_insert(now);
+        ws.last_frame_time = Some(now);
         let raw_progress = animation_progress_at(start, ws.duration, now);
-        let eased = ws.start_progress
-          + (1.0 - ws.start_progress)
-            * apply_easing(raw_progress, &ws.easing);
+        let eased = apply_easing(raw_progress, &ws.easing);
 
         // Complete early once the surrogate is within
         // `WS_COMPLETE_THRESHOLD_PX` of its target for non-overshooting
@@ -992,7 +1015,7 @@ impl AnimationManager {
         // 99% fraction (a 1% opacity/scale snap is invisible).
         // Overshooting curves always run to full wall-clock
         // duration to preserve bounce.
-        let ws_done = if ws.easing.can_overshoot() {
+        let ws_done = if ws.motion.is_some() || ws.easing.can_overshoot() {
           raw_progress >= 1.0
         } else if raw_progress >= 1.0 {
           true
@@ -1023,10 +1046,34 @@ impl AnimationManager {
         // ~1% gap between surrogate and the just-uncloaked real window
         // exposes the desktop for one frame.
         let eased_final = if ws_done { 1.0 } else { eased };
-        ws.rendered_progress = eased_final;
+        if let Some(motion) = &mut ws.motion {
+          motion.sample(
+            raw_progress,
+            ws.duration.as_secs_f32(),
+            &ws.easing,
+          );
+        }
 
         for entry in ws.windows.values_mut() {
           if let Some(ref mut s) = entry.surrogate {
+            // All retained panels share one camera, so a new destination
+            // cannot reset their positions, spacing, or instantaneous
+            // speed.
+            let (slide_progress, slide_incoming, slide_order) =
+              if let Some(motion) = &ws.motion {
+                let offset = entry.panel_position - motion.position;
+                if offset.abs() >= 1.0 {
+                  s.hide_thumbnail();
+                  continue;
+                }
+                (
+                  1.0 - offset.abs(),
+                  true,
+                  if offset < 0.0 { -1 } else { 1 },
+                )
+              } else {
+                (eased_final, entry.is_incoming, ws.order_direction)
+              };
             // At completion, hide outgoing surrogates immediately. They
             // have already slid fully off-screen, but hiding
             // the thumbnail outright guarantees nothing
@@ -1041,9 +1088,9 @@ impl AnimationManager {
                 WorkspaceSwitchDirection::Horizontal => {
                   if ws.zoom_factor > 0.0 {
                     s.update_slide_zoom_horizontal(
-                      eased_final,
-                      entry.is_incoming,
-                      ws.order_direction,
+                      slide_progress,
+                      slide_incoming,
+                      slide_order,
                       ws.monitor_x,
                       ws.monitor_width,
                       ws.monitor_y,
@@ -1053,9 +1100,9 @@ impl AnimationManager {
                     );
                   } else {
                     s.update_slide_horizontal(
-                      eased_final,
-                      entry.is_incoming,
-                      ws.order_direction,
+                      slide_progress,
+                      slide_incoming,
+                      slide_order,
                       ws.monitor_x,
                       ws.monitor_width,
                       ws.slide_distance_h,
@@ -1065,9 +1112,9 @@ impl AnimationManager {
                 WorkspaceSwitchDirection::Vertical => {
                   if ws.zoom_factor > 0.0 {
                     s.update_slide_zoom_vertical(
-                      eased_final,
-                      entry.is_incoming,
-                      ws.order_direction,
+                      slide_progress,
+                      slide_incoming,
+                      slide_order,
                       ws.monitor_x,
                       ws.monitor_width,
                       ws.monitor_y,
@@ -1077,9 +1124,9 @@ impl AnimationManager {
                     );
                   } else {
                     s.update_slide_vertical(
-                      eased_final,
-                      entry.is_incoming,
-                      ws.order_direction,
+                      slide_progress,
+                      slide_incoming,
+                      slide_order,
                       ws.monitor_y,
                       ws.monitor_height,
                       ws.slide_distance_v,
@@ -1819,9 +1866,18 @@ impl AnimationManager {
     let ws_windows: HashMap<Uuid, WorkspaceSwitchEntry> = windows
       .into_iter()
       .map(|(id, surrogate, is_incoming)| {
+        let name = route
+          .as_ref()
+          .map(|(from, to)| if is_incoming { to } else { from })
+          .cloned()
+          .unwrap_or_default();
         (
           id,
           WorkspaceSwitchEntry {
+            panel_position: config
+              .workspace_config_index(&name)
+              .unwrap_or_default() as f32,
+            workspace_name: name,
             surrogate,
             is_incoming,
           },
@@ -1858,9 +1914,19 @@ impl AnimationManager {
         }
       }
       self.workspace_switch = Some(WorkspaceSwitchState {
+        last_frame_time: None,
+        motion: if ws_config.style == WorkspaceSwitchStyle::Slide {
+          route.as_ref().map(|(from, to)| {
+            super::workspace_motion::WorkspaceMotion::new(
+              config.workspace_config_index(from).unwrap_or_default()
+                as f32,
+              config.workspace_config_index(to).unwrap_or_default() as f32,
+            )
+          })
+        } else {
+          None
+        },
         route,
-        start_progress: 0.0,
-        rendered_progress: 0.0,
         full_duration: Duration::from_millis(u64::from(duration_ms)),
         windows: ws_windows,
         start_time: None,
@@ -2260,9 +2326,9 @@ mod tests {
 
   fn workspace_switch(ids: [Uuid; 2]) -> WorkspaceSwitchState {
     WorkspaceSwitchState {
+      last_frame_time: None,
+      motion: None,
       route: Some(("1".into(), "2".into())),
-      start_progress: 0.0,
-      rendered_progress: 0.0,
       full_duration: Duration::from_millis(450),
       windows: ids
         .into_iter()
@@ -2271,6 +2337,8 @@ mod tests {
           (
             id,
             WorkspaceSwitchEntry {
+              workspace_name: (index + 1).to_string(),
+              panel_position: index as f32,
               surrogate: None,
               is_incoming: index == 1,
             },
@@ -2295,63 +2363,73 @@ mod tests {
   }
 
   #[test]
-  fn reversing_slide_preserves_positions_and_scales_remaining_time() {
+  fn retarget_keeps_older_panels_and_only_latest_destination_is_incoming()
+  {
     let (tx, _rx) = mpsc::unbounded_channel();
     let mut manager = AnimationManager::new(tx);
     let ids = [Uuid::new_v4(), Uuid::new_v4()];
-    for direction in [-1, 1] {
-      for progress in [0.0, 0.1, 0.35, 0.8] {
-        let mut ws = workspace_switch(ids);
-        ws.order_direction = direction;
-        ws.rendered_progress = progress;
-        manager.workspace_switch = Some(ws);
+    let third = Uuid::new_v4();
+    let config = UserConfig::new(Some(
+      std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../resources/assets/sample-config.yaml"),
+    ))
+    .unwrap();
+    let mut ws = workspace_switch(ids);
+    let mut motion =
+      super::super::workspace_motion::WorkspaceMotion::new(0.0, 1.0);
+    motion.sample(0.3, 0.45, &EasingFunction::default());
+    let position = motion.position;
+    let velocity = motion.velocity;
+    ws.motion = Some(motion);
+    let frame_time = Instant::now();
+    ws.last_frame_time = Some(frame_time);
+    ws.vsync_anchored = true;
+    manager.workspace_switch = Some(ws);
 
-        assert!(manager.reverse_workspace_switch("2", "1"));
-        let reversed = manager.workspace_switch.as_ref().unwrap();
-        assert_eq!(reversed.order_direction, -direction);
-        assert!(reversed.windows[&ids[0]].is_incoming);
-        assert!(!reversed.windows[&ids[1]].is_incoming);
-        assert!(
-          (reversed.duration.as_secs_f32() - 0.45 * progress).abs()
-            < 0.00001
-        );
-        assert!(reversed.start_time.is_none());
-        assert!(!reversed.vsync_anchored);
-        // Both axes use these normalized offsets. Each original outgoing
-        // and incoming window must occupy exactly the same position.
-        let p = reversed.start_progress;
-        let reverse_direction = reversed.order_direction as f32;
-        assert!(
-          (reverse_direction * (1.0 - p) + direction as f32 * progress)
-            .abs()
-            < 0.00001
-        );
-        assert!(
-          (-reverse_direction * p - direction as f32 * (1.0 - progress))
-            .abs()
-            < 0.00001
-        );
-
-        assert!(manager.reverse_workspace_switch("1", "2"));
-        let restored = manager.workspace_switch.as_ref().unwrap();
-        assert!((restored.start_progress - progress).abs() < 0.00001);
-        assert_eq!(restored.order_direction, direction);
-        assert!(!restored.windows[&ids[0]].is_incoming);
-      }
+    for (from, to, additions) in [
+      ("2", "3", vec![(third, None, true)]),
+      ("3", "1", vec![]),
+      ("1", "3", vec![]),
+    ] {
+      assert!(manager.can_retarget_workspace_switch(from));
+      manager.retarget_workspace_switch(
+        additions,
+        (from.into(), to.into()),
+        &config,
+      );
+      let ws = manager.workspace_switch.as_ref().unwrap();
+      assert_eq!(ws.windows.len(), 3);
+      assert_eq!(ws.motion.as_ref().unwrap().position, position);
+      assert_eq!(ws.motion.as_ref().unwrap().velocity, velocity);
+      assert_eq!(ws.start_time, Some(frame_time));
+      assert!(ws.vsync_anchored);
+      assert_eq!(
+        ws.windows
+          .values()
+          .filter(|entry| entry.is_incoming)
+          .count(),
+        1
+      );
+      assert!(ws
+        .windows
+        .values()
+        .filter(|entry| entry.is_incoming)
+        .all(|entry| entry.workspace_name == to));
     }
   }
 
   #[test]
-  fn unrelated_workspace_and_non_slide_do_not_reverse() {
+  fn another_monitor_and_non_slide_do_not_retarget() {
     let (tx, _rx) = mpsc::unbounded_channel();
     let mut manager = AnimationManager::new(tx);
     manager.workspace_switch =
       Some(workspace_switch([Uuid::new_v4(), Uuid::new_v4()]));
-    assert!(!manager.reverse_workspace_switch("2", "3"));
-    assert!(!manager.reverse_workspace_switch("3", "1"));
-    manager.workspace_switch.as_mut().unwrap().style =
-      WorkspaceSwitchStyle::Fade;
-    assert!(!manager.reverse_workspace_switch("2", "1"));
+    assert!(!manager.can_retarget_workspace_switch("2"));
+    manager.workspace_switch.as_mut().unwrap().motion = Some(
+      super::super::workspace_motion::WorkspaceMotion::new(0.0, 1.0),
+    );
+    assert!(!manager.can_retarget_workspace_switch("3"));
+    assert!(manager.can_retarget_workspace_switch("2"));
   }
 
   #[test]
