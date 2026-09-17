@@ -8,9 +8,7 @@ use wm_platform::{NativeWindow, RectDelta};
 use crate::{
   commands::{
     container::{
-      attach_container, attach_tiling_window_with_minimums,
-      refresh_tiling_minimums, refresh_window_minimum,
-      set_focused_descendant,
+      attach_container, place_tiling_window, set_focused_descendant,
     },
     window::run_window_rules,
   },
@@ -280,46 +278,25 @@ fn create_window(
 }
 
 fn attach_new_window(
-  mut window_container: WindowContainer,
+  window_container: WindowContainer,
   target_parent: &Container,
   target_index: usize,
   config: &UserConfig,
 ) -> anyhow::Result<WindowContainer> {
-  let mut insertion_parent = target_parent.clone();
-  let mut insertion_index = target_index;
   if let WindowContainer::TilingWindow(window) = &window_container {
-    refresh_window_minimum(&window_container)?;
-    refresh_tiling_minimums(target_parent)?;
-    if attach_tiling_window_with_minimums(
+    place_tiling_window(
       window,
       target_parent,
       target_index,
       &config.value.gaps,
-    )? {
-      return Ok(window_container);
-    }
-    // Do not make existing tiles smaller than their applications allow.
-    // Keep the new app usable as a floating window if no safe split fits.
-    window_container = window
-      .to_non_tiling(
-        WindowState::Floating(
-          config.value.window_behavior.state_defaults.floating.clone(),
-        ),
-        None,
-      )
-      .into();
-    insertion_parent = target_parent
-      .workspace()
-      .context("No target workspace.")?
-      .into();
-    insertion_index = insertion_parent.child_count();
+    )?;
+  } else {
+    attach_container(
+      &window_container.clone().into(),
+      target_parent,
+      Some(target_index),
+    )?;
   }
-
-  attach_container(
-    &window_container.clone().into(),
-    &insertion_parent,
-    Some(insertion_index),
-  )?;
   Ok(window_container)
 }
 

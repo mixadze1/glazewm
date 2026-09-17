@@ -174,6 +174,11 @@ pub trait NativeWindowWindowsExt {
   /// Returns `None` if the application does not respond within 20ms.
   fn minimum_tracking_size(&self) -> Option<(i32, i32)>;
 
+  /// Whether a point is in the caption or client area rather than on a
+  /// resize border. Used only after Windows starts a native drag, since
+  /// custom title bars can report `HTCLIENT` when initiating `SC_MOVE`.
+  fn is_move_area_at(&self, point: &crate::Point) -> bool;
+
   /// Gets the delta between the window's frame and the window's border.
   /// This represents the size of a window's shadow borders.
   ///
@@ -389,6 +394,32 @@ impl NativeWindowWindowsExt for NativeWindow {
         info.ptMinTrackSize.y.max(1),
       ))
     }
+  }
+
+  fn is_move_area_at(&self, point: &crate::Point) -> bool {
+    use windows::Win32::{
+      Foundation::{LPARAM, WPARAM},
+      UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, HTCAPTION, HTCLIENT, SMTO_ABORTIFHUNG,
+        SMTO_BLOCK, WM_NCHITTEST,
+      },
+    };
+    // WM_NCHITTEST packs signed screen coordinates into two 16-bit words.
+    let packed = (point.x & 0xffff) | ((point.y & 0xffff) << 16);
+    let mut hit = 0;
+    let result = unsafe {
+      SendMessageTimeoutW(
+        self.hwnd(),
+        WM_NCHITTEST,
+        WPARAM(0),
+        LPARAM(packed as isize),
+        SMTO_ABORTIFHUNG | SMTO_BLOCK,
+        20,
+        Some(&raw mut hit),
+      )
+    };
+    result.0 != 0
+      && (hit == HTCAPTION as usize || hit == HTCLIENT as usize)
   }
 
   fn shadow_borders(&self) -> crate::Result<RectDelta> {

@@ -297,7 +297,43 @@ pub fn attach_tiling_window_with_minimums(
     window.set_tiling_size(sizes[1]);
     return Ok(true);
   }
+  // A focused nested split may be full while its ancestors have room.
+  // Try those before declaring the whole workspace unable to tile.
+  if parent.as_split().is_some() {
+    if let Some(ancestor) = parent.parent() {
+      return attach_tiling_window_with_minimums(
+        window,
+        &ancestor,
+        parent.index() + 1,
+        gaps_config,
+      );
+    }
+  }
   Ok(false)
+}
+
+/// Shared placement for newly managed windows and explicit transitions
+/// back to tiling. Minimum-aware placement is preferred, but lack of room
+/// must not silently change the requested window state to floating.
+pub fn place_tiling_window(
+  window: &TilingWindow,
+  parent: &Container,
+  index: usize,
+  gaps_config: &GapsConfig,
+) -> anyhow::Result<()> {
+  refresh_window_minimum(&window.clone().into())?;
+  refresh_tiling_minimums(
+    &parent.workspace().context("No target workspace.")?.into(),
+  )?;
+  if !attach_tiling_window_with_minimums(
+    window,
+    parent,
+    index,
+    gaps_config,
+  )? {
+    super::attach_container(&window.clone().into(), parent, Some(index))?;
+  }
+  Ok(())
 }
 
 fn allocate_shares(weights: &[f32], minimums: &[f32]) -> Option<Vec<f32>> {
@@ -519,6 +555,40 @@ mod tests {
     assert_eq!(new.parent(), b.parent());
     assert!(new.to_rect().unwrap().width() >= 900);
     assert!(b.to_rect().unwrap().width() >= 1000);
+  }
+
+  #[test]
+  fn insertion_escapes_a_full_nested_split_before_floating() {
+    let a = window(400, 480);
+    let b = window(400, 480);
+    let sibling = window(400, 100);
+    let new = window(500, 600);
+    let split = SplitContainer::mock()
+      .tiling_direction(TilingDirection::Vertical)
+      .tiling_containers(vec![a.clone().into(), b.clone().into()])
+      .call();
+    let (_monitor, workspace) =
+      workspace(true, vec![split.clone().into(), sibling.clone().into()]);
+    assert!(plan_tiling_insertion(&new, &split.clone().into())
+      .unwrap()
+      .is_none());
+    assert!(attach_tiling_window_with_minimums(
+      &new,
+      &split.into(),
+      1,
+      &GapsConfig::default(),
+    )
+    .unwrap());
+    assert_eq!(new.parent(), Some(workspace.into()));
+    for (window, width, height) in [
+      (a, 400, 480),
+      (b, 400, 480),
+      (sibling, 400, 100),
+      (new, 500, 600),
+    ] {
+      let rect = window.to_rect().unwrap();
+      assert!(rect.width() >= width && rect.height() >= height);
+    }
   }
 
   #[test]

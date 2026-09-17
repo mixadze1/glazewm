@@ -196,6 +196,21 @@ pub fn handle_window_moved_or_resized(
     if is_drag_start {
       tracing::info!("Window started dragging: {window}");
 
+      let initial_cursor = state.dispatcher.cursor_position().ok();
+      // A title-bar move can also resize a window when the application
+      // restores itself or enforces its minimum size. Do not infer a
+      // border resize from that size change and start clamping the mouse.
+      #[cfg(target_os = "windows")]
+      let operation = initial_cursor.as_ref().and_then(|point| {
+        (state
+          .dispatcher
+          .is_mouse_down(&wm_platform::MouseButton::Left)
+          && window.native().is_move_area_at(point))
+        .then_some(ActiveDragOperation::Move)
+      });
+      #[cfg(not(target_os = "windows"))]
+      let operation = None;
+
       state.animation_manager.remove_animation(&window.id());
       #[cfg(target_os = "windows")]
       window.native().set_cloaked(false)?;
@@ -204,13 +219,9 @@ pub fn handle_window_moved_or_resized(
         .insert(window.id(), frame_position.clone());
 
       window.set_active_drag(Some(ActiveDrag {
-        operation: None,
+        operation,
         resize_edges: None,
-        initial_cursor_position: state
-          .dispatcher
-          .cursor_position()
-          .ok()
-          .map(|p| (p.x, p.y)),
+        initial_cursor_position: initial_cursor.map(|p| (p.x, p.y)),
         is_from_floating: matches!(
           window.state(),
           WindowState::Floating(_)

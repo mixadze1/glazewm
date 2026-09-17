@@ -6,7 +6,8 @@ use wm_platform::NativeWindowWindowsExt;
 
 use crate::{
   commands::container::{
-    move_container_within_tree, replace_container, resize_tiling_container,
+    detach_container, move_container_within_tree, place_tiling_window,
+    replace_container, resize_with_minimums, set_focused_descendant,
   },
   models::{Container, InsertionTarget, WindowContainer},
   traits::{CommonGetters, TilingSizeGetters, WindowGetters},
@@ -88,20 +89,34 @@ fn set_tiling(
     .unwrap_or((workspace.clone().into(), workspace.child_count()));
 
   let tiling_window = window.to_tiling(config.value.gaps.clone());
-
-  // Replace the original window with the created tiling window.
-  replace_container(
-    &tiling_window.clone().into(),
-    &window.parent().context("No parent.")?,
-    window.index(),
-  )?;
-
-  move_container_within_tree(
-    &tiling_window.clone().into(),
+  let was_focused = window.has_focus(None);
+  let original_parent = window.parent().context("No parent.")?;
+  let original_index = window.index();
+  let target_index = target_index
+    - usize::from(
+      original_parent == target_parent && original_index < target_index,
+    );
+  detach_container(window.clone().into())?;
+  if let Err(error) = place_tiling_window(
+    &tiling_window,
     &target_parent,
     target_index,
-    state,
-  )?;
+    &config.value.gaps,
+  ) {
+    // A failed geometry query must not drop the managed window.
+    crate::commands::container::attach_container(
+      &window.clone().into(),
+      &original_parent,
+      Some(original_index),
+    )?;
+    if was_focused {
+      set_focused_descendant(&window.into(), None);
+    }
+    return Err(error);
+  }
+  if was_focused {
+    set_focused_descendant(&tiling_window.clone().into(), None);
+  }
 
   #[allow(clippy::cast_precision_loss)]
   if let Some(insertion_target) = &insertion_target {
@@ -112,12 +127,15 @@ fn set_tiling(
     // siblings. E.g. if the window was 0.5 with 1 sibling, and now has 2
     // siblings, scale to 0.5 * (2/3) to maintain proportional sizing.
     let target_size = insertion_target.prev_tiling_size * size_scale;
-    resize_tiling_container(&tiling_window.clone().into(), target_size);
+    // Saved proportions only apply when placement kept the same parent.
+    if tiling_window.parent().as_ref() == Some(&target_parent) {
+      resize_with_minimums(&tiling_window.clone().into(), target_size)?;
+    }
   }
 
   state
     .pending_sync
-    .queue_containers_to_redraw(target_parent.tiling_children())
+    .queue_container_to_redraw(workspace.clone())
     .queue_workspace_to_reorder(workspace);
 
   Ok(tiling_window.into())
