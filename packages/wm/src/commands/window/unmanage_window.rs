@@ -70,6 +70,14 @@ pub fn unmanage_window(
   window: WindowContainer,
   state: &mut WmState,
 ) -> anyhow::Result<()> {
+  #[cfg(target_os = "windows")]
+  if state
+    .resize_cursor_clip
+    .as_ref()
+    .is_some_and(|(id, _)| *id == window.id())
+  {
+    state.resize_cursor_clip = None;
+  }
   // Create iterator of parent, grandparent, and great-grandparent.
   let ancestors = window.ancestors().take(3).collect::<Vec<_>>();
 

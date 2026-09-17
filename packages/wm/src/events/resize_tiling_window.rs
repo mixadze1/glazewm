@@ -1,3 +1,8 @@
+// Layout proportions use f32; screen pixel coordinates fit its exact
+// integer range. Cursor bounds explicitly round inward before converting
+// to pixels.
+#![allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+
 use anyhow::Context;
 use wm_common::{ResizeEdges, TilingDirection};
 #[cfg(target_os = "windows")]
@@ -79,6 +84,9 @@ pub(super) fn resize_tiling_window(
     window.set_active_drag(Some(drag));
   }
 
+  #[cfg(target_os = "windows")]
+  constrain_resize_cursor(window, &edges, state)?;
+
   for (enabled, horizontal, leading, delta) in [
     (edges.left, true, true, requested.left - current.left),
     (edges.right, true, false, requested.right - current.right),
@@ -148,28 +156,12 @@ fn resize_edge(
         &children[index + 1..]
       };
       if !neighbors.is_empty() {
-        let (gap_x, gap_y) = container.inner_gaps()?;
-        let gap = if horizontal { gap_x } else { gap_y };
-        let available = length(&parent.to_rect()?, horizontal)
-          - gap as f32 * (children.len() - 1) as f32;
+        let (available, minimum, capacities) =
+          resize_constraints(&container, neighbors, horizontal)?;
         if available <= 0. {
           return Ok(None);
         }
         let size = container.tiling_size();
-        let minimum = ((minimum_length(&container, horizontal)? + 1.)
-          / available)
-          .max(MIN_TILING_SIZE)
-          .min(size);
-        let capacities = neighbors
-          .iter()
-          .map(|neighbor| {
-            let minimum = ((minimum_length(neighbor, horizontal)? + 1.)
-              / available)
-              .max(MIN_TILING_SIZE)
-              .min(neighbor.tiling_size());
-            Ok(neighbor.tiling_size() - minimum)
-          })
-          .collect::<anyhow::Result<Vec<_>>>()?;
         let capacity: f32 = capacities.iter().sum();
         let change =
           (if leading { -delta } else { delta }) as f32 / available;
@@ -205,6 +197,157 @@ fn resize_edge(
     container = ancestor;
   }
   Ok(None)
+}
+
+fn resize_constraints(
+  container: &TilingContainer,
+  neighbors: &[TilingContainer],
+  horizontal: bool,
+) -> anyhow::Result<(f32, f32, Vec<f32>)> {
+  let parent = container.parent().context("No parent.")?;
+  let (gap_x, gap_y) = container.inner_gaps()?;
+  let gap = if horizontal { gap_x } else { gap_y };
+  let available = length(&parent.to_rect()?, horizontal)
+    - gap as f32 * container.tiling_siblings().count() as f32;
+  let minimum = |child: &TilingContainer| -> anyhow::Result<f32> {
+    Ok(
+      ((minimum_length(child, horizontal)? + 1.) / available.max(1.))
+        .max(MIN_TILING_SIZE)
+        .min(child.tiling_size()),
+    )
+  };
+  let capacities = neighbors
+    .iter()
+    .map(|neighbor| Ok(neighbor.tiling_size() - minimum(neighbor)?))
+    .collect::<anyhow::Result<Vec<_>>>()?;
+  Ok((available, minimum(container)?, capacities))
+}
+
+/// Legal displacement of a dragged edge, in layout pixels.
+#[cfg(any(target_os = "windows", test))]
+fn edge_limits(
+  window: &TilingWindow,
+  horizontal: bool,
+  leading: bool,
+) -> anyhow::Result<(f32, f32)> {
+  let mut container: TilingContainer = window.clone().into();
+  while let Some(parent) = container.parent() {
+    let same_axis = (parent.as_direction_container()?.tiling_direction()
+      == TilingDirection::Horizontal)
+      == horizontal;
+    if same_axis {
+      let children = parent.tiling_children().collect::<Vec<_>>();
+      let index = children
+        .iter()
+        .position(|child| child.id() == container.id())
+        .context("Resize container missing from parent.")?;
+      let neighbors = if leading {
+        &children[..index]
+      } else {
+        &children[index + 1..]
+      };
+      if !neighbors.is_empty() {
+        let (available, minimum, capacities) =
+          resize_constraints(&container, neighbors, horizontal)?;
+        let shrink =
+          (container.tiling_size() - minimum) * available.max(0.);
+        let grow = capacities.iter().sum::<f32>() * available.max(0.);
+        return Ok(if leading {
+          (-grow, shrink)
+        } else {
+          (-shrink, grow)
+        });
+      }
+    }
+    let Ok(ancestor) = parent.as_tiling_container() else {
+      break;
+    };
+    container = ancestor;
+  }
+  Ok((0., 0.))
+}
+
+#[cfg(target_os = "windows")]
+fn constrain_resize_cursor(
+  window: &TilingWindow,
+  edges: &ResizeEdges,
+  state: &mut WmState,
+) -> anyhow::Result<()> {
+  let Some(drag) = window.active_drag() else {
+    return Ok(());
+  };
+  let Some((cursor_x, cursor_y)) = drag.initial_cursor_position else {
+    return Ok(());
+  };
+  // A late LOCATIONCHANGE after button-up must not confine the cursor
+  // again.
+  if !state
+    .dispatcher
+    .is_mouse_down(&wm_platform::MouseButton::Left)
+  {
+    state.resize_cursor_clip = None;
+    return Ok(());
+  }
+  if state
+    .resize_cursor_clip
+    .as_ref()
+    .is_some_and(|(id, _)| *id != window.id())
+  {
+    state.resize_cursor_clip = None;
+  }
+  if state.resize_cursor_clip.is_none() {
+    state.resize_cursor_clip =
+      Some((window.id(), wm_platform::ResizeCursorClip::new()?));
+  }
+  let current =
+    window.to_rect()?.apply_delta(&window.border_delta(), None);
+  for (enabled, horizontal, leading, cursor, initial_edge, current_edge) in [
+    (
+      edges.left || edges.right,
+      true,
+      edges.left,
+      cursor_x,
+      if edges.left {
+        drag.initial_position.left
+      } else {
+        drag.initial_position.right
+      },
+      if edges.left {
+        current.left
+      } else {
+        current.right
+      },
+    ),
+    (
+      edges.top || edges.bottom,
+      false,
+      edges.top,
+      cursor_y,
+      if edges.top {
+        drag.initial_position.top
+      } else {
+        drag.initial_position.bottom
+      },
+      if edges.top {
+        current.top
+      } else {
+        current.bottom
+      },
+    ),
+  ] {
+    if enabled {
+      let (min, max) = edge_limits(window, horizontal, leading)?;
+      let origin = cursor + current_edge - initial_edge;
+      if let Some((_, clip)) = &mut state.resize_cursor_clip {
+        clip.constrain_axis(
+          horizontal,
+          origin + min.ceil() as i32,
+          origin + max.floor() as i32,
+        )?;
+      }
+    }
+  }
+  Ok(())
 }
 
 fn length(rect: &Rect, horizontal: bool) -> f32 {
@@ -300,6 +443,41 @@ mod tests {
     );
     assert!(updated.right && updated.bottom);
     assert!(!updated.left && !updated.top);
+  }
+
+  #[test]
+  fn cursor_limits_match_layout_constraints_in_both_directions() {
+    for horizontal in [true, false] {
+      for leading in [true, false] {
+        let a = window(350, 200);
+        let b = window(350, 200);
+        let direction = if horizontal {
+          TilingDirection::Horizontal
+        } else {
+          TilingDirection::Vertical
+        };
+        let _monitor =
+          layout(direction, vec![a.clone().into(), b.clone().into()]);
+        let dragged = if leading { &b } else { &a };
+        let (min, max) =
+          edge_limits(dragged, horizontal, leading).unwrap();
+        let before = dragged.to_rect().unwrap();
+        let requested =
+          if leading { min.ceil() } else { max.floor() } as i32;
+        resize_edge(dragged, horizontal, leading, requested).unwrap();
+        let after = dragged.to_rect().unwrap();
+        near(
+          length(&after, horizontal) as i32
+            - length(&before, horizontal) as i32,
+          if leading { -requested } else { requested },
+        );
+        let (_, remaining) =
+          edge_limits(dragged, horizontal, leading).unwrap();
+        if !leading {
+          assert!(remaining <= 1.1);
+        }
+      }
+    }
   }
 
   #[test]

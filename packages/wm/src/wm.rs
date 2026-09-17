@@ -885,6 +885,10 @@ impl WindowManager {
     ipc_server: &mut IpcServer,
   ) {
     self.state.emit_event(WmEvent::ApplicationExiting);
+    #[cfg(target_os = "windows")]
+    {
+      self.state.resize_cursor_clip = None;
+    }
 
     // Ensure that the WM is unpaused, otherwise, shutdown commands won't
     // get executed.

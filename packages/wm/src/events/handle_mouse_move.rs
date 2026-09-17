@@ -17,6 +17,18 @@ pub fn handle_mouse_move(
   state: &mut WmState,
   config: &UserConfig,
 ) -> anyhow::Result<()> {
+  // Release immediately on button-up, even if WM is paused or the native
+  // MOVESIZEEND notification is delayed. Do not finish the drag here.
+  #[cfg(target_os = "windows")]
+  if matches!(
+    event,
+    MouseEvent::ButtonUp {
+      button: MouseButton::Left,
+      ..
+    }
+  ) {
+    state.resize_cursor_clip = None;
+  }
   // Ignore mouse move events if the WM is paused. The mouse listener
   // should anyways be disabled when the WM is paused, but this is just in
   // case any events slipped through while disabling.

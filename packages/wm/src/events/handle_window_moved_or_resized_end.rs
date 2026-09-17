@@ -36,6 +36,10 @@ pub fn handle_window_moved_or_resized_end(
   state: &mut WmState,
   config: &UserConfig,
 ) -> anyhow::Result<()> {
+  #[cfg(target_os = "windows")]
+  {
+    state.resize_cursor_clip = None;
+  }
   let Some(active_drag) = window.active_drag() else {
     return Ok(());
   };

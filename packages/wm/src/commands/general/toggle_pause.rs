@@ -4,6 +4,10 @@ use crate::wm_state::WmState;
 
 /// Pauses or unpauses the WM.
 pub fn toggle_pause(state: &mut WmState) {
+  #[cfg(target_os = "windows")]
+  {
+    state.resize_cursor_clip = None;
+  }
   let is_paused = !state.is_paused;
   state.is_paused = is_paused;
 

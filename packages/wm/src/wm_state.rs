@@ -44,6 +44,9 @@ pub struct WmState {
   /// restart loops.
   pub window_target_positions: HashMap<Uuid, Rect>,
 
+  #[cfg(target_os = "windows")]
+  pub resize_cursor_clip: Option<(Uuid, wm_platform::ResizeCursorClip)>,
+
   /// Name of the most recently focused workspace.
   ///
   /// Used for the `general.toggle_workspace_on_refocus` option on
@@ -98,6 +101,8 @@ impl WmState {
       pending_sync: PendingSync::default(),
       animation_manager: AnimationManager::new(animation_tick_tx),
       window_target_positions: HashMap::new(),
+      #[cfg(target_os = "windows")]
+      resize_cursor_clip: None,
       prev_effects_window: None,
       recent_workspace_name: None,
       unmanaged_or_minimized_timestamp: None,

@@ -11,6 +11,10 @@ mod keybinding_listener;
 mod models;
 mod mouse_listener;
 mod native_window;
+#[cfg(target_os = "windows")]
+mod resize_cursor_clip;
+#[cfg(target_os = "windows")]
+pub use resize_cursor_clip::ResizeCursorClip;
 mod platform_event;
 mod platform_impl;
 mod single_instance;

@@ -17,6 +17,10 @@ pub fn handle_display_settings_changed(
   config: &UserConfig,
 ) -> anyhow::Result<()> {
   tracing::info!("Display settings changed.");
+  #[cfg(target_os = "windows")]
+  {
+    state.resize_cursor_clip = None;
+  }
 
   // Ignore the event if retrieval of the displays or their properties
   // fails (can happen transiently during sleep/wake).

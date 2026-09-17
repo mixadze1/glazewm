@@ -206,6 +206,11 @@ pub fn handle_window_moved_or_resized(
       window.set_active_drag(Some(ActiveDrag {
         operation: None,
         resize_edges: None,
+        initial_cursor_position: state
+          .dispatcher
+          .cursor_position()
+          .ok()
+          .map(|p| (p.x, p.y)),
         is_from_floating: matches!(
           window.state(),
           WindowState::Floating(_)

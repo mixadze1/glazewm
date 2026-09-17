@@ -21,9 +21,14 @@ pub struct ActiveDrag {
   /// corrections.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub resize_edges: Option<ResizeEdges>,
+
+  #[serde(skip)]
+  pub initial_cursor_position: Option<(i32, i32)>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+// Four independent physical edges; corners combine one edge on each axis.
+#[allow(clippy::struct_excessive_bools)]
 pub struct ResizeEdges {
   pub left: bool,
   pub top: bool,
