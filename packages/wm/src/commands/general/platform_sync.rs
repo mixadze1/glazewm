@@ -1127,7 +1127,23 @@ fn reposition_window(
     return Ok(());
   }
 
-  if window.active_drag().is_some() {
+  if window.active_drag().is_some()
+    && window.state() == WindowState::Tiling
+  {
+    // A clamped left/top edge needs its position restored as well as its
+    // size. `resize` alone leaves the window overlapping its neighbor.
+    #[cfg(target_os = "windows")]
+    {
+      use wm_platform::{SWP_NOACTIVATE, SWP_NOZORDER};
+      window.native().set_window_pos(
+        z_order,
+        rect,
+        SWP_NOACTIVATE | SWP_NOZORDER,
+      )?;
+    }
+    #[cfg(target_os = "macos")]
+    window.native().set_frame(rect)?;
+  } else if window.active_drag().is_some() {
     window.native().resize(rect.width(), rect.height())?;
   } else {
     #[cfg(target_os = "macos")]

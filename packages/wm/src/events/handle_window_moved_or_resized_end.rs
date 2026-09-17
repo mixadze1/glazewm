@@ -1,13 +1,15 @@
 use anyhow::Context;
 use wm_common::{
-  try_warn, FullscreenStateConfig, TilingDirection, WindowState,
+  try_warn, ActiveDragOperation, FullscreenStateConfig, TilingDirection,
+  WindowState,
 };
-use wm_platform::{LengthValue, Point, Rect};
+use wm_platform::{Point, Rect};
 
+use super::resize_tiling_window::resize_tiling_window;
 use crate::{
   commands::{
     container::{move_container_within_tree, wrap_in_split_container},
-    window::{set_window_size, update_window_state},
+    window::update_window_state,
   },
   events::update_floating_window_position,
   models::{
@@ -136,16 +138,19 @@ pub fn handle_window_moved_or_resized_end(
         window.as_window_container()?
       );
 
-      let frame = window.native_properties().frame;
-
-      // Update the window's size based on the new frame position. This
-      // means we use the actual window dimensions as the source of truth.
-      set_window_size(
-        window.clone().into(),
-        Some(LengthValue::from_px(frame.width())),
-        Some(LengthValue::from_px(frame.height())),
-        state,
-      )?;
+      // Consume the final native frame through the same constrained path.
+      // Do not apply the size a second time or resize after a small move.
+      if active_drag.operation == Some(ActiveDragOperation::Resize) {
+        if let Some(edges) = &active_drag.resize_edges {
+          resize_tiling_window(
+            window,
+            &window.native_properties().frame,
+            edges,
+            state,
+          )?;
+        }
+        state.pending_sync.suppress_animations();
+      }
 
       window.set_active_drag(None);
 

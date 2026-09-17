@@ -170,6 +170,10 @@ pub trait NativeWindowWindowsExt {
   /// This method is only available on Windows.
   fn frame_with_shadows(&self) -> crate::Result<Rect>;
 
+  /// Queries the application's minimum tracking size, including shadows.
+  /// Returns `None` if the application does not respond within 20ms.
+  fn minimum_tracking_size(&self) -> Option<(i32, i32)>;
+
   /// Gets the delta between the window's frame and the window's border.
   /// This represents the size of a window's shadow borders.
   ///
@@ -352,6 +356,39 @@ impl NativeWindowWindowsExt for NativeWindow {
 
   fn frame_with_shadows(&self) -> crate::Result<Rect> {
     self.inner.frame_with_shadows()
+  }
+
+  fn minimum_tracking_size(&self) -> Option<(i32, i32)> {
+    use windows::Win32::{
+      Foundation::{LPARAM, WPARAM},
+      UI::WindowsAndMessaging::{
+        GetSystemMetrics, SendMessageTimeoutW, MINMAXINFO,
+        SMTO_ABORTIFHUNG, SMTO_BLOCK, SM_CXMINTRACK, SM_CYMINTRACK,
+        WM_GETMINMAXINFO,
+      },
+    };
+
+    let mut info = MINMAXINFO::default();
+    // WM_GETMINMAXINFO is a system message: Windows marshals its buffer
+    // across processes. Bound the wait so a hung app cannot block
+    // dragging.
+    unsafe {
+      info.ptMinTrackSize.x = GetSystemMetrics(SM_CXMINTRACK);
+      info.ptMinTrackSize.y = GetSystemMetrics(SM_CYMINTRACK);
+      let result = SendMessageTimeoutW(
+        self.hwnd(),
+        WM_GETMINMAXINFO,
+        WPARAM(0),
+        LPARAM((&raw mut info) as isize),
+        SMTO_ABORTIFHUNG | SMTO_BLOCK,
+        20,
+        None,
+      );
+      (result.0 != 0).then_some((
+        info.ptMinTrackSize.x.max(1),
+        info.ptMinTrackSize.y.max(1),
+      ))
+    }
   }
 
   fn shadow_borders(&self) -> crate::Result<RectDelta> {

@@ -128,6 +128,7 @@ impl NativeWindowProperties {
       is_minimized,
       is_maximized,
       is_resizable,
+      minimum_tiling_size: None,
       #[cfg(target_os = "windows")]
       class_name: String::new(),
       #[cfg(target_os = "windows")]

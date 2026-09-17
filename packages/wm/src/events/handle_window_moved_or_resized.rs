@@ -1,7 +1,8 @@
 use anyhow::Context;
 use wm_common::{
   try_warn, ActiveDrag, ActiveDragOperation, DisplayState,
-  FloatingStateConfig, FullscreenStateConfig, HideMethod, WindowState,
+  FloatingStateConfig, FullscreenStateConfig, HideMethod, ResizeEdges,
+  WindowState,
 };
 #[cfg(target_os = "windows")]
 use wm_platform::NativeWindowWindowsExt;
@@ -9,6 +10,9 @@ use wm_platform::NativeWindowWindowsExt;
 use wm_platform::{LengthValue, MouseButton, RectDelta};
 use wm_platform::{NativeWindow, Rect};
 
+use super::resize_tiling_window::{
+  cache_resize_minimums, resize_tiling_window,
+};
 use crate::{
   commands::{
     container::{flatten_split_container, move_container_within_tree},
@@ -201,6 +205,7 @@ pub fn handle_window_moved_or_resized(
 
       window.set_active_drag(Some(ActiveDrag {
         operation: None,
+        resize_edges: None,
         is_from_floating: matches!(
           window.state(),
           WindowState::Floating(_)
@@ -452,7 +457,9 @@ fn update_drag_state(
   };
 
   // Ignore if the window position has not changed yet.
-  if *frame_position == active_drag.initial_position {
+  if active_drag.operation.is_none()
+    && *frame_position == active_drag.initial_position
+  {
     return Ok(());
   }
 
@@ -472,11 +479,39 @@ fn update_drag_state(
 
     window.set_active_drag(Some(ActiveDrag {
       operation: Some(operation),
+      resize_edges: (!is_move).then_some(ResizeEdges {
+        left: frame_position.left != active_drag.initial_position.left,
+        top: frame_position.top != active_drag.initial_position.top,
+        right: frame_position.right != active_drag.initial_position.right,
+        bottom: frame_position.bottom
+          != active_drag.initial_position.bottom,
+      }),
       ..active_drag.clone()
     }));
 
+    if !is_move {
+      if let WindowContainer::TilingWindow(window) = window {
+        cache_resize_minimums(window)?;
+      }
+    }
+
     is_move
   };
+
+  if !is_move {
+    if let WindowContainer::TilingWindow(tiling_window) = window {
+      if let Some(edges) =
+        window.active_drag().and_then(|drag| drag.resize_edges)
+      {
+        return resize_tiling_window(
+          tiling_window,
+          frame_position,
+          &edges,
+          state,
+        );
+      }
+    }
+  }
 
   // Transition window to be floating while it's being dragged, but only
   // after it has been moved at least 10px from its initial position. The

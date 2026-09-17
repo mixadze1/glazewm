@@ -16,6 +16,19 @@ pub struct ActiveDrag {
   ///
   /// Used to calculate movement distance.
   pub initial_position: Rect,
+
+  /// Edges selected at the beginning of a resize, before layout
+  /// corrections.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub resize_edges: Option<ResizeEdges>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ResizeEdges {
+  pub left: bool,
+  pub top: bool,
+  pub right: bool,
+  pub bottom: bool,
 }
 
 #[derive(Debug, Copy, Clone, Deserialize, PartialEq, Serialize)]

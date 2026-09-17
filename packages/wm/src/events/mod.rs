@@ -9,6 +9,7 @@ mod handle_window_moved_or_resized;
 mod handle_window_moved_or_resized_end;
 mod handle_window_shown;
 mod handle_window_title_changed;
+mod resize_tiling_window;
 
 pub use handle_display_settings_changed::*;
 pub use handle_mouse_move::*;
