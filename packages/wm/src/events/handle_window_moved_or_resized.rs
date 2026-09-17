@@ -170,6 +170,13 @@ pub fn handle_window_moved_or_resized(
     if is_drag_start {
       tracing::info!("Window started dragging: {window}");
 
+      state.animation_manager.remove_animation(&window.id());
+      #[cfg(target_os = "windows")]
+      window.native().set_cloaked(false)?;
+      state
+        .window_target_positions
+        .insert(window.id(), frame_position.clone());
+
       window.set_active_drag(Some(ActiveDrag {
         operation: None,
         is_from_floating: matches!(

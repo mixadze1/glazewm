@@ -642,6 +642,23 @@ fn redraw_containers(
     let is_state_change =
       state.pending_sync.is_window_state_change(&window.id());
 
+    if is_fullscreen || window.active_drag().is_some() {
+      state.animation_manager.remove_animation(&window.id());
+    }
+
+    #[cfg(target_os = "windows")]
+    if !is_fullscreen
+      && !matches!(window.state(), WindowState::Minimized)
+      && (window.native().is_maximized()?
+        || window.native().is_minimized()?)
+    {
+      state.animation_manager.remove_animation(&window.id());
+      window.native().restore(Some(&target_rect))?;
+      window.update_native_properties(|properties| {
+        properties.is_maximized = false;
+      });
+    }
+
     let is_outgoing_switch = state
       .pending_sync
       .is_workspace_switch_outgoing(&window.id());
@@ -745,9 +762,12 @@ fn redraw_containers(
     // otherwise always take the non-animated path, which also cancels
     // any in-flight animation (and its surrogate) via
     // `remove_animation` below.
-    let should_use_animations = !is_outgoing_switch
+    let should_use_animations = window.active_drag().is_none()
+      && !is_outgoing_switch
       && (is_frozen_by_ws_animation
         || (!is_fullscreen
+          && is_visible
+          && !matches!(window.state(), WindowState::Minimized)
           && !suppress_animations
           && ((!is_floating && anim_enabled)
             || (is_state_change && anim_enabled)

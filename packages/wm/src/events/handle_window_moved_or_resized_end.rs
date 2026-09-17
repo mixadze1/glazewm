@@ -38,6 +38,10 @@ pub fn handle_window_moved_or_resized_end(
     return Ok(());
   };
 
+  state
+    .window_target_positions
+    .insert(window.id(), window.native_properties().frame);
+
   match &window {
     WindowContainer::NonTilingWindow(window) => {
       let is_maximized = try_warn!(window.native().is_maximized());
@@ -116,8 +120,14 @@ pub fn handle_window_moved_or_resized_end(
 
         // Window is a temporary floating window that should be
         // reverted back to tiling.
-        let window = drop_as_tiling_window(window, state, config)?;
+        let result = drop_as_tiling_window(window, state, config);
         window.set_active_drag(None);
+        if let Some(container) = state.container_by_id(window.id()) {
+          if let Ok(live_window) = container.as_window_container() {
+            live_window.set_active_drag(None);
+          }
+        }
+        result?;
       }
     }
     WindowContainer::TilingWindow(window) => {
@@ -173,6 +183,14 @@ fn drop_as_tiling_window(
     .or_else(|| moved_window.workspace())
     .context("Couldn't find workspace for window drop.")?;
 
+  // Restoring tiling can flatten the tree; select targets afterwards.
+  let moved_window = update_window_state(
+    moved_window.clone().into(),
+    WindowState::Tiling,
+    state,
+    config,
+  )?;
+
   // Get the workspace, split containers, and other windows under the
   // dragged window.
   let containers_at_pos = state
@@ -193,7 +211,10 @@ fn drop_as_tiling_window(
 
   // If the target parent has no children (i.e. an empty workspace), then
   // add the window directly.
-  if target_parent.tiling_children().count() == 0 {
+  if !target_parent
+    .tiling_children()
+    .any(|child| child.id() != moved_window.id())
+  {
     move_container_within_tree(
       &moved_window.clone().into(),
       &target_parent.clone().into(),
@@ -201,20 +222,14 @@ fn drop_as_tiling_window(
       state,
     )?;
 
-    moved_window.set_insertion_target(None);
-
-    return update_window_state(
-      moved_window.as_window_container()?,
-      WindowState::Tiling,
-      state,
-      config,
-    );
+    return Ok(moved_window);
   }
 
   let nearest_container = target_parent
     .children()
     .into_iter()
     .filter_map(|container| container.as_tiling_container().ok())
+    .filter(|container| container.id() != moved_window.id())
     .try_fold(None, |acc: Option<TilingContainer>, container| match acc {
       Some(acc) => {
         let is_nearer = acc.to_rect()?.distance_to_point(&mouse_pos)
@@ -229,13 +244,6 @@ fn drop_as_tiling_window(
   let tiling_direction = target_parent.tiling_direction();
   let drop_position =
     drop_position(&mouse_pos, &nearest_container.to_rect()?);
-
-  let moved_window = update_window_state(
-    moved_window.clone().into(),
-    WindowState::Tiling,
-    state,
-    config,
-  )?;
 
   let should_split = nearest_container.is_tiling_window()
     && match tiling_direction {

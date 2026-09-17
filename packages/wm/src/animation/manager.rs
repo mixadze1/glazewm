@@ -436,6 +436,21 @@ impl AnimationManager {
     self.slide_in_monitor_rects.remove(window_id);
     #[cfg(target_os = "windows")]
     self.pending_close_windows.remove(window_id);
+    #[cfg(target_os = "windows")]
+    {
+      self
+        .pending_session_cleanup
+        .retain(|(id, _, _)| id != window_id);
+      self
+        .pending_surrogate_updates
+        .retain(|update| &update.window_id != window_id);
+      if let Some(switch) = &mut self.workspace_switch {
+        switch.windows.remove(window_id);
+      }
+      if let Some(switch) = &mut self.pending_ws_cleanup {
+        switch.windows.remove(window_id);
+      }
+    }
   }
 
   /// Removes all completed animations and returns their window IDs.
@@ -1214,7 +1229,10 @@ impl AnimationManager {
   /// now.
   #[cfg(target_os = "windows")]
   fn predictive_now(&self) -> Instant {
-    self.predictive_vsync_now().unwrap_or_else(Instant::now)
+    let now = Instant::now();
+    self
+      .predictive_vsync_now()
+      .map_or(now, |predicted| predicted.max(now))
   }
 
   /// Installs or upgrades the vsync waiter to the monitor with handle
@@ -2159,5 +2177,41 @@ impl AnimationManager {
         }
       }
     }
+  }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn cancelling_window_discards_queued_frames_without_affecting_neighbors()
+  {
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut manager = AnimationManager::new(tx);
+    let cancelled = Uuid::new_v4();
+    let neighbor = Uuid::new_v4();
+    let rect = Rect::from_xy(0, 0, 640, 480);
+    for window_id in [cancelled, neighbor, cancelled] {
+      manager
+        .pending_surrogate_updates
+        .push(PendingSurrogateUpdate {
+          window_id,
+          rect: rect.clone(),
+          opacity: u8::MAX,
+          handoff: true,
+        });
+    }
+    manager.pending_close_windows.insert(cancelled, 0);
+    manager.slide_in_monitor_rects.insert(cancelled, rect);
+
+    manager.remove_animation(&cancelled);
+    manager.remove_animation(&cancelled);
+
+    assert_eq!(manager.pending_surrogate_updates.len(), 1);
+    assert_eq!(manager.pending_surrogate_updates[0].window_id, neighbor);
+    assert!(!manager.has_close_animation(&cancelled));
+    assert!(!manager.slide_in_monitor_rects.contains_key(&cancelled));
+    assert!(!manager.has_active_animations());
   }
 }
