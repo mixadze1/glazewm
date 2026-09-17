@@ -16,7 +16,7 @@ use wm_common::{
   ClientResponseMessage, CommandData, EventSubscribeData,
   EventSubscriptionMessage, FocusedData, MonitorsData, QueryCommand,
   ServerMessage, SubscribableEvent, TilingDirectionData, WindowsData,
-  WmEvent, WorkspacesData, DEFAULT_IPC_PORT,
+  WmEvent, WorkspacesData,
 };
 
 use crate::{
@@ -44,7 +44,7 @@ impl IpcServer {
     let (event_tx, _event_rx) = broadcast::channel(16);
     let (unsubscribe_tx, _unsubscribe_rx) = broadcast::channel(16);
 
-    let server_addr = format!("127.0.0.1:{DEFAULT_IPC_PORT}");
+    let server_addr = format!("127.0.0.1:{}", wm_common::ipc_port()?);
     let server = TcpListener::bind(server_addr.clone()).await?;
     info!("IPC server started on: '{}'.", server_addr);
 

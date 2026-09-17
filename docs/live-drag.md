@@ -35,6 +35,14 @@ layout on release. Paused, floating, and fullscreen windows are excluded.
 This restores the external window rectangle; it cannot make application
 content adapt to dimensions its UI was not designed to support.
 
+## IPC recovery
+
+If an exited process still occupies port 6123, a plain-text
+`~/.glzr/glazewm/ipc-port` file can select a different loopback port.
+The WM, CLI, and watcher all read the same file. Remove the file and restart
+the WM to return to port 6123 once Windows has released it. Client handshakes
+time out after three seconds instead of hanging installation indefinitely.
+
 Regression tests cover changes before release, stable repeated pointer
 positions, boundary jitter, nested splits, movement between monitors, and
 configuration defaults. They exercise the layout tree without controlling

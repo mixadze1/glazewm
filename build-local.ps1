@@ -43,7 +43,7 @@ try {
         if (!(Test-Path -LiteralPath $installedExe)) {
             throw 'The animation preview installation was not found. Build outputs are ready; installation was skipped.'
         }
-        $foreignInstance = Get-Process -Name glazewm -ErrorAction SilentlyContinue | Where-Object { $_.Path -ne $installedExe }
+        $foreignInstance = Get-Process -Name glazewm -ErrorAction SilentlyContinue | Where-Object { !$_.HasExited -and $_.Path -ne $installedExe }
         if ($foreignInstance) { throw 'A different GlazeWM installation is running. Exit it before installing this preview.' }
         $backupDir = Join-Path $installDir ('backups\' + (Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
         New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
@@ -52,10 +52,12 @@ try {
             if (Test-Path -LiteralPath $source) { Copy-Item -LiteralPath $source -Destination $backupDir }
         }
         $ownedProcesses = Get-Process -Name glazewm,glazewm-watcher -ErrorAction SilentlyContinue | Where-Object {
-            $_.Path -eq $installedExe -or $_.Path -eq (Join-Path $installDir 'glazewm-watcher.exe')
+            !$_.HasExited -and ($_.Path -eq $installedExe -or $_.Path -eq (Join-Path $installDir 'glazewm-watcher.exe'))
         }
         if ($ownedProcesses) {
-            & $installedCli command wm-exit
+            if ($ownedProcesses | Where-Object { $_.Path -eq $installedExe }) {
+                & $installedCli command wm-exit
+            }
             foreach ($process in $ownedProcesses) {
                 if (!$process.WaitForExit(5000)) { Stop-Process -Id $process.Id }
             }

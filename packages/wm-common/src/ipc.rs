@@ -5,6 +5,28 @@ use crate::{BindingModeConfig, ContainerDto, TilingDirection, WmEvent};
 
 pub const DEFAULT_IPC_PORT: u32 = 6123;
 
+/// Optional per-user port override for recovering from a stale IPC
+/// listener.
+pub fn ipc_port() -> anyhow::Result<u16> {
+  let home =
+    std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+  let Some(home) = home else {
+    return Ok(DEFAULT_IPC_PORT as u16);
+  };
+  let path = std::path::PathBuf::from(home).join(".glzr/glazewm/ipc-port");
+  match std::fs::read_to_string(path) {
+    Ok(value) => {
+      let port: u16 = value.trim().parse()?;
+      anyhow::ensure!(port != 0, "IPC port must be nonzero");
+      Ok(port)
+    }
+    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+      Ok(DEFAULT_IPC_PORT as u16)
+    }
+    Err(error) => Err(error.into()),
+  }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "messageType", rename_all = "snake_case")]
 pub enum ServerMessage {
