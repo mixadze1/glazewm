@@ -478,16 +478,18 @@ pub struct WindowOpenConfig {
   /// - `none` / `fade`: no slide; combine with `opacity_from` for a pure
   ///   fade-in.
   /// - `zoom`: zoom in from the window center.
+  #[serde(alias = "type", alias = "direction")]
   pub style: WindowTransitionStyle,
   /// Starting opacity (0.0–1.0). At `1.0` no fade is applied; at `0.0` the
   /// window fades in from fully transparent. Can be combined with any style.
+  #[serde(deserialize_with = "deserialize_unit_interval")]
   pub opacity_from: f32,
 }
 
 impl Default for WindowOpenConfig {
   fn default() -> Self {
     WindowOpenConfig {
-      enabled: true,
+      enabled: false,
       duration_ms: 150,
       easing: EasingFunction::CubicBezier(0.16, 1.0, 0.3, 1.0),
       style: WindowTransitionStyle::SlideRight,
@@ -514,9 +516,11 @@ pub struct WindowCloseConfig {
   /// - `zoom`: zoom out from the window center.
   /// - `slide_right` / `slide_left` / `slide_top` / `slide_bottom`: slide off
   ///   that edge.
+  #[serde(alias = "type")]
   pub style: WindowTransitionStyle,
   /// Final opacity (0.0–1.0). At `0.0` the window fades to fully transparent;
   /// at `1.0` no fade is applied.
+  #[serde(deserialize_with = "deserialize_unit_interval")]
   pub opacity_to: f32,
 }
 
@@ -603,6 +607,7 @@ pub struct WorkspaceSwitchAnimationConfig {
   pub duration_ms: u32,
   pub easing: EasingFunction,
   /// Motion type: `slide` (default), `fade`, `zoom`, or `iris`.
+  #[serde(alias = "type")]
   pub style: WorkspaceSwitchStyle,
   /// Slide axis when `style` is `slide`: `horizontal` (default) or `vertical`.
   pub direction: WorkspaceSwitchDirection,
@@ -614,12 +619,14 @@ pub struct WorkspaceSwitchAnimationConfig {
   /// At `1.0` (default) the outgoing workspace stays fully opaque. At `0.0` it
   /// fades out to transparent. Any value in between produces a partial fade.
   /// Applies to all `style` values.
+  #[serde(deserialize_with = "deserialize_unit_interval")]
   pub opacity_outgoing: f32,
   /// Opacity at the start of the incoming workspace's animation (0.0–1.0).
   ///
   /// At `1.0` (default) the incoming workspace starts fully opaque. At `0.0`
   /// it fades in from transparent. Any value in between produces a partial
   /// fade. Applies to all `style` values.
+  #[serde(deserialize_with = "deserialize_unit_interval")]
   pub opacity_incoming: f32,
   /// Amount of workspace-level scale applied during `slide` transitions.
   ///
@@ -629,13 +636,14 @@ pub struct WorkspaceSwitchAnimationConfig {
   /// preserving the workspace-as-a-panel illusion. Has no effect on `fade` or
   /// `zoom` styles. Valid range: `0.0` (no zoom) to `1.0` (collapses to a
   /// point). Recommended range: `0.05`–`0.15` for a subtle depth effect.
+  #[serde(deserialize_with = "deserialize_unit_interval")]
   pub zoom_factor: f32,
 }
 
 impl Default for WorkspaceSwitchAnimationConfig {
   fn default() -> Self {
     WorkspaceSwitchAnimationConfig {
-      enabled: true,
+      enabled: false,
       duration_ms: 250,
       easing: EasingFunction::CubicBezier(0.16, 1.0, 0.3, 1.0),
       style: WorkspaceSwitchStyle::default(),
@@ -665,7 +673,7 @@ pub struct AnimationTypeConfig {
 impl Default for AnimationTypeConfig {
   fn default() -> Self {
     AnimationTypeConfig {
-      enabled: true,
+      enabled: false,
       duration_ms: 150,
       easing: EasingFunction::CubicBezier(0.42, 0.0, 0.58, 1.0),
       threshold_px: 10,
@@ -688,7 +696,7 @@ pub struct WindowResizeConfig {
 impl Default for WindowResizeConfig {
   fn default() -> Self {
     WindowResizeConfig {
-      enabled: true,
+      enabled: false,
       duration_ms: 150,
       easing: EasingFunction::CubicBezier(0.42, 0.0, 0.58, 1.0),
       threshold_px: 10,
@@ -740,17 +748,27 @@ impl EasingFunction {
 }
 
 impl<'de> Deserialize<'de> for EasingFunction {
-  fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+  fn deserialize<D: serde::Deserializer<'de>>(
+    d: D,
+  ) -> Result<Self, D::Error> {
     let s = String::deserialize(d)?;
     // Named aliases expand to their CSS cubic-bezier control points.
     match s.as_str() {
       "linear" => Ok(EasingFunction::CubicBezier(0.0, 0.0, 1.0, 1.0)),
-      "ease_in_out" => Ok(EasingFunction::CubicBezier(0.42, 0.0, 0.58, 1.0)),
+      "ease_in_out" => {
+        Ok(EasingFunction::CubicBezier(0.42, 0.0, 0.58, 1.0))
+      }
       "ease_in" => Ok(EasingFunction::CubicBezier(0.42, 0.0, 1.0, 1.0)),
       "ease_out" => Ok(EasingFunction::CubicBezier(0.0, 0.0, 0.58, 1.0)),
-      "ease_in_out_cubic" => Ok(EasingFunction::CubicBezier(0.65, 0.0, 0.35, 1.0)),
-      "ease_in_cubic" => Ok(EasingFunction::CubicBezier(0.32, 0.0, 0.67, 0.0)),
-      "ease_out_cubic" => Ok(EasingFunction::CubicBezier(0.33, 1.0, 0.68, 1.0)),
+      "ease_in_out_cubic" => {
+        Ok(EasingFunction::CubicBezier(0.65, 0.0, 0.35, 1.0))
+      }
+      "ease_in_cubic" => {
+        Ok(EasingFunction::CubicBezier(0.32, 0.0, 0.67, 0.0))
+      }
+      "ease_out_cubic" => {
+        Ok(EasingFunction::CubicBezier(0.33, 1.0, 0.68, 1.0))
+      }
       "ease_out_spring" => Ok(EasingFunction::EaseOutSpring),
       s => {
         if let Some(inner) = s
@@ -775,6 +793,11 @@ impl<'de> Deserialize<'de> for EasingFunction {
             })?;
           }
           let [x1, y1, x2, y2] = floats;
+          if !floats.iter().all(|value| value.is_finite()) {
+            return Err(serde::de::Error::custom(
+              "cubic_bezier arguments must be finite numbers",
+            ));
+          }
           if !(0.0..=1.0).contains(&x1) || !(0.0..=1.0).contains(&x2) {
             return Err(serde::de::Error::custom(
               "cubic_bezier x1 and x2 must be in [0, 1]",
@@ -795,13 +818,17 @@ impl<'de> Deserialize<'de> for EasingFunction {
 }
 
 impl Serialize for EasingFunction {
-  fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+  fn serialize<S: serde::Serializer>(
+    &self,
+    s: S,
+  ) -> Result<S::Ok, S::Error> {
     match self {
       EasingFunction::EaseOutSpring => s.serialize_str("ease_out_spring"),
       EasingFunction::CubicBezier(x1, y1, x2, y2) => {
         // Serialize back to a named alias when the control points match exactly,
         // so round-tripped configs stay human-readable.
-        let repr = if *x1 == 0.0 && *y1 == 0.0 && *x2 == 1.0 && *y2 == 1.0 {
+        let repr = if *x1 == 0.0 && *y1 == 0.0 && *x2 == 1.0 && *y2 == 1.0
+        {
           "linear".to_string()
         } else if *x1 == 0.42 && *y1 == 0.0 && *x2 == 0.58 && *y2 == 1.0 {
           "ease_in_out".to_string()
@@ -821,6 +848,23 @@ impl Serialize for EasingFunction {
         s.serialize_str(&repr)
       }
     }
+  }
+}
+
+/// Rejects non-finite and out-of-range opacity and zoom settings.
+fn deserialize_unit_interval<'de, D>(
+  deserializer: D,
+) -> Result<f32, D::Error>
+where
+  D: serde::Deserializer<'de>,
+{
+  let value = f32::deserialize(deserializer)?;
+  if (0.0..=1.0).contains(&value) {
+    Ok(value)
+  } else {
+    Err(serde::de::Error::custom(
+      "value must be finite and in [0, 1]",
+    ))
   }
 }
 

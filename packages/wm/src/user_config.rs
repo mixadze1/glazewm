@@ -381,12 +381,13 @@ impl UserConfig {
 
 #[cfg(test)]
 mod tests {
-  use wm_common::{ParsedConfig, WindowTransitionStyle, WorkspaceSwitchStyle};
+  use wm_common::{
+    ParsedConfig, WindowTransitionStyle, WorkspaceSwitchStyle,
+  };
 
   use super::SAMPLE_CONFIG;
 
-  /// The bundled sample config (which uses the `type` key for animation
-  /// transition types) must always parse.
+  /// The bundled sample config must always parse.
   #[test]
   fn sample_config_parses() {
     let config: ParsedConfig = serde_yaml::from_str(SAMPLE_CONFIG)
@@ -443,5 +444,86 @@ animations:
       config.animations.window_open.style,
       WindowTransitionStyle::SlideTop
     );
+  }
+
+  #[test]
+  fn animation_defaults_preserve_existing_configs() {
+    let config: ParsedConfig = serde_yaml::from_str("{}").unwrap();
+    assert!(!config.animations.window_move.enabled);
+    assert!(!config.animations.window_resize.enabled);
+    assert!(!config.animations.window_open.enabled);
+    assert!(!config.animations.window_close.enabled);
+    assert!(!config.animations.workspace_switch.enabled);
+  }
+
+  #[test]
+  fn animation_settings_and_type_alias_are_honored() {
+    let config: ParsedConfig = serde_yaml::from_str(
+      r"
+animations:
+  window_move:
+    enabled: true
+    duration_ms: 175
+    threshold_px: 2
+    easing: ease_out_cubic
+  window_resize:
+    enabled: true
+    duration_ms: 120
+  window_open:
+    type: zoom
+  window_close:
+    type: slide_left
+  workspace_switch:
+    enabled: true
+    type: fade
+    zoom_factor: 0.0
+    opacity_incoming: 0.0
+",
+    )
+    .unwrap();
+    assert!(config.animations.window_move.enabled);
+    assert_eq!(config.animations.window_move.duration_ms, 175);
+    assert_eq!(config.animations.window_move.threshold_px, 2);
+    assert_eq!(config.animations.window_resize.duration_ms, 120);
+    assert_eq!(
+      config.animations.window_open.style,
+      WindowTransitionStyle::Zoom
+    );
+    assert_eq!(
+      config.animations.window_close.style,
+      WindowTransitionStyle::SlideLeft
+    );
+    assert_eq!(
+      config.animations.workspace_switch.style,
+      WorkspaceSwitchStyle::Fade
+    );
+    assert_eq!(config.animations.workspace_switch.zoom_factor, 0.0);
+  }
+
+  #[test]
+  fn invalid_animation_numbers_are_rejected() {
+    for (section, field) in [
+      ("window_open", "opacity_from"),
+      ("window_close", "opacity_to"),
+      ("workspace_switch", "opacity_incoming"),
+      ("workspace_switch", "opacity_outgoing"),
+      ("workspace_switch", "zoom_factor"),
+    ] {
+      for value in ["-0.1", "1.1", ".nan", ".inf"] {
+        let yaml =
+          format!("animations:\n  {section}:\n    {field}: {value}\n");
+        assert!(
+          serde_yaml::from_str::<ParsedConfig>(&yaml).is_err(),
+          "{yaml}"
+        );
+      }
+    }
+    for easing in
+      ["cubic_bezier(0, NaN, 1, 1)", "cubic_bezier(0, 0, 1, inf)"]
+    {
+      let yaml =
+        format!("animations:\n  window_move:\n    easing: '{easing}'\n");
+      assert!(serde_yaml::from_str::<ParsedConfig>(&yaml).is_err());
+    }
   }
 }

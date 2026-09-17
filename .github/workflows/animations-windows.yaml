@@ -2,7 +2,7 @@ name: Animations Windows
 
 on:
   push:
-    branches: [codex/animations-pr-1392]
+    branches: [feature/improves-animations]
   workflow_dispatch:
 
 permissions:

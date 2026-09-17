@@ -3,10 +3,7 @@ use wm_common::EasingFunction;
 
 /// Calculates the current progress of an animation (0.0 to 1.0).
 #[cfg(test)]
-pub fn animation_progress(
-  start_time: Instant,
-  duration: Duration,
-) -> f32 {
+pub fn animation_progress(start_time: Instant, duration: Duration) -> f32 {
   animation_progress_at(start_time, duration, Instant::now())
 }
 
@@ -30,8 +27,7 @@ pub fn animation_progress_at(
     return 1.0;
   }
 
-  #[allow(clippy::cast_precision_loss)]
-  let progress = elapsed.as_millis() as f32 / duration.as_millis() as f32;
+  let progress = elapsed.as_secs_f32() / duration.as_secs_f32();
   progress.clamp(0.0, 1.0)
 }
 
@@ -71,6 +67,18 @@ fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, x: f32) -> f32 {
       break;
     }
     t = (t - (sample_x(t) - x) / dx).clamp(0.0, 1.0);
+  }
+
+  if (sample_x(t) - x).abs() > 1e-6 {
+    let (mut low, mut high) = (0.0, 1.0);
+    for _ in 0..24 {
+      t = (low + high) * 0.5;
+      if sample_x(t) < x {
+        low = t;
+      } else {
+        high = t;
+      }
+    }
   }
 
   sample_y(t)
@@ -117,5 +125,33 @@ mod tests {
     assert_eq!(mid.width(), 150);
     assert_eq!(mid.height(), 150);
   }
-}
 
+  #[test]
+  fn progress_handles_submillisecond_and_zero_durations() {
+    let start = Instant::now();
+    let progress = animation_progress_at(
+      start,
+      Duration::from_micros(500),
+      start + Duration::from_micros(250),
+    );
+    assert!((progress - 0.5).abs() < 1e-6);
+    assert_eq!(animation_progress_at(start, Duration::ZERO, start), 1.0);
+    assert_eq!(
+      animation_progress_at(
+        start,
+        Duration::from_millis(100),
+        start - Duration::from_millis(1),
+      ),
+      0.0,
+    );
+  }
+
+  #[test]
+  fn bezier_converges_near_a_flat_derivative() {
+    for x in [0.01, 0.1, 0.49, 0.51, 0.9, 0.99] {
+      let t = cubic_bezier(1.0, 1.0 / 3.0, 0.0, 2.0 / 3.0, x);
+      let reconstructed_x = ((4.0 * t - 6.0) * t + 3.0) * t;
+      assert!((reconstructed_x - x).abs() < 1e-5);
+    }
+  }
+}
