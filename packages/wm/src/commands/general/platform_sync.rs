@@ -847,10 +847,10 @@ fn redraw_containers(
           .get(&window.id())
           .map_or(false, |s| s.is_session_cloaked());
         #[cfg(target_os = "windows")]
-        if !already_cloaked_by_session
-          && !window.native().is_cloaked().unwrap_or(false)
-        {
-          let _ = window.native().set_cloaked(true);
+        if !already_cloaked_by_session {
+          if !window.native().is_cloaked().unwrap_or(false) {
+            let _ = window.native().set_cloaked(true);
+          }
 
           // Pre-position the cloaked window at its target rect so it
           // appears there when uncloaked at animation end. Posted
@@ -965,7 +965,11 @@ fn redraw_containers(
         let already_positioned = is_visible
           && state
             .animation_manager
-            .was_pre_committed_at(&window.id(), apply_rect);
+            .was_pre_committed_at(&window.id(), apply_rect)
+          && window
+            .native()
+            .frame_with_shadows()
+            .is_ok_and(|frame| frame == *apply_rect);
         #[cfg(not(target_os = "windows"))]
         let already_positioned = false;
 

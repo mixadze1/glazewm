@@ -76,12 +76,34 @@ pub fn handle_window_moved_or_resized(
     let old_is_maximized = window.native_properties().is_maximized;
     let is_maximized = try_warn!(window.native().is_maximized());
 
+    #[cfg(target_os = "windows")]
+    let position_drifted = !state.is_paused
+      && !is_interactive_start
+      && !is_maximized
+      && window.state() == WindowState::Tiling
+      && window.display_state() == DisplayState::Shown
+      && state
+        .animation_manager
+        .get_animation(&window.id())
+        .is_none()
+      && state.window_target_positions.get(&window.id()).is_some_and(
+        |target| {
+          window
+            .native()
+            .frame_with_shadows()
+            .is_ok_and(|actual| has_position_drift(&actual, target))
+        },
+      );
+    #[cfg(not(target_os = "windows"))]
+    let position_drifted = false;
+
     // Ignore duplicate move/resize events. Window position changes can
     // trigger multiple events. For example, restoring from maximized can
     // trigger as many as 4 identical events on Windows.
     if old_frame_position == frame_position
       && old_is_maximized == is_maximized
       && !is_interactive_start
+      && !position_drifted
     {
       return Ok(());
     }
@@ -357,6 +379,13 @@ pub fn handle_window_moved_or_resized(
           )?;
         }
       }
+      WindowState::Tiling if position_drifted => {
+        tracing::debug!(
+          "Correcting unsolicited tiling window move: {window}"
+        );
+        state.animation_manager.remove_animation(&window.id());
+        state.pending_sync.queue_container_to_redraw(window);
+      }
       _ => {}
     }
   }
@@ -546,11 +575,38 @@ fn is_in_corner(window_frame: &Rect, monitor_rect: &Rect) -> bool {
   (is_left_corner || is_right_corner) && is_bottom_of_monitor
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn has_position_drift(actual: &Rect, target: &Rect) -> bool {
+  (i64::from(actual.x()) - i64::from(target.x())).abs() > 1
+    || (i64::from(actual.y()) - i64::from(target.y())).abs() > 1
+}
+
 #[cfg(test)]
 mod tests {
   use wm_platform::Rect;
 
-  use super::is_in_corner;
+  use super::{has_position_drift, is_in_corner};
+
+  #[test]
+  fn detects_window_restoring_onto_its_neighbor() {
+    let target = Rect::from_xy(1278, 10, 1279, 1379);
+    let actual = Rect::from_xy(3, 13, 1279, 1379);
+    assert!(has_position_drift(&actual, &target));
+    assert!(!has_position_drift(&target, &target));
+  }
+
+  #[test]
+  fn does_not_retry_size_constraints_or_rounding() {
+    let target = Rect::from_xy(10, 10, 640, 480);
+    assert!(!has_position_drift(
+      &Rect::from_xy(10, 10, 960, 660),
+      &target
+    ));
+    assert!(!has_position_drift(
+      &Rect::from_xy(11, 9, 640, 480),
+      &target
+    ));
+  }
 
   #[test]
   fn matches_corner_positions() {
