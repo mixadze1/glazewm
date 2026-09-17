@@ -3,7 +3,10 @@ use wm_common::WindowState;
 use wm_platform::{LengthValue, Rect};
 
 use crate::{
-  commands::container::resize_tiling_container,
+  commands::container::{
+    available_tiling_length, refresh_tiling_minimums,
+    refresh_window_minimum, resize_with_minimums,
+  },
   models::{NonTilingWindow, TilingWindow, WindowContainer},
   traits::{
     CommonGetters, PositionGetters, TilingSizeGetters, WindowGetters,
@@ -46,6 +49,8 @@ fn set_tiling_window_size(
   target_height: Option<LengthValue>,
   state: &mut WmState,
 ) -> anyhow::Result<()> {
+  let workspace = window.workspace().context("No workspace.")?;
+  refresh_tiling_minimums(&workspace.into())?;
   if let Some(target_width) = target_width {
     set_tiling_window_length(window, &target_width, true, state)?;
   }
@@ -70,25 +75,17 @@ fn set_tiling_window_length(
 
   if let Some(container_to_resize) = container_to_resize {
     let parent = container_to_resize.parent().context("No parent.")?;
-    let (horizontal_gap, vertical_gap) =
-      container_to_resize.inner_gaps()?;
-
-    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-    let parent_length = if is_width_resize {
-      parent.to_rect()?.width()
-        - horizontal_gap * window.tiling_siblings().count() as i32
-    } else {
-      parent.to_rect()?.height()
-        - vertical_gap * window.tiling_siblings().count() as i32
-    };
+    let parent_length =
+      available_tiling_length(&container_to_resize, is_width_resize)?;
+    if parent_length <= 0 {
+      return Ok(());
+    }
 
     // Convert the target length to a tiling size.
     let tiling_size = target_length.to_percentage(parent_length);
 
     // Skip the resize if the window is already at the target size.
-    if container_to_resize.tiling_size() - tiling_size != 0. {
-      resize_tiling_container(&container_to_resize, tiling_size);
-
+    if resize_with_minimums(&container_to_resize, tiling_size)? {
       state
         .pending_sync
         .queue_containers_to_redraw(parent.tiling_children());
@@ -107,6 +104,11 @@ fn set_floating_window_size(
   let monitor = window.monitor().context("No monitor")?;
   let monitor_rect = monitor.to_rect()?;
   let window_rect = window.to_rect()?;
+  refresh_window_minimum(&window.clone().into())?;
+  let (minimum_width, minimum_height) = window
+    .native_properties()
+    .minimum_tiling_size
+    .unwrap_or((MIN_FLOATING_WIDTH, MIN_FLOATING_HEIGHT));
 
   // Prevent resize from making the window smaller than minimum dimensions.
   // Always allow the size to be increased, even if the window would still
@@ -128,7 +130,7 @@ fn set_floating_window_size(
   let new_width = length_with_clamp(
     target_width_px,
     window_rect.width(),
-    MIN_FLOATING_WIDTH,
+    minimum_width.max(MIN_FLOATING_WIDTH),
   );
 
   let target_height_px = target_height
@@ -137,7 +139,7 @@ fn set_floating_window_size(
   let new_height = length_with_clamp(
     target_height_px,
     window_rect.height(),
-    MIN_FLOATING_HEIGHT,
+    minimum_height.max(MIN_FLOATING_HEIGHT),
   );
 
   window.set_floating_placement(Rect::from_xy(

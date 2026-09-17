@@ -283,6 +283,9 @@ fn redraw_containers(
   // cancelled below so their windows snap to their target rect.
   let suppress_animations = state.pending_sync.animations_suppressed();
 
+  #[cfg(target_os = "windows")]
+  let live_resize_windows = sync_live_resize(&windows_to_redraw, state)?;
+
   // Workspace-switch pre-pass: create slide surrogates for all
   // incoming/outgoing windows before any real window is repositioned.
   // Outgoing surrogates are shown immediately (before the real window is
@@ -626,6 +629,14 @@ fn redraw_containers(
     state
       .window_target_positions
       .insert(window.id(), target_rect.clone());
+
+    #[cfg(target_os = "windows")]
+    if live_resize_windows.contains(&window.id()) {
+      // The shared live transaction already applied geometry and removed
+      // any animation. Do not enqueue asynchronous moves or repaint
+      // frames.
+      continue;
+    }
 
     // Floating windows are not animated in general, but we allow a single
     // `window_move` animation when the window just crossed the
@@ -1073,6 +1084,58 @@ fn redraw_containers(
   state.animation_manager.apply_outgoing_surrogate_opacities();
 
   Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn sync_live_resize(
+  windows: &[WindowContainer],
+  state: &mut WmState,
+) -> anyhow::Result<Vec<uuid::Uuid>> {
+  let is_live_resize = state.windows().iter().any(|window| {
+    window.state() == WindowState::Tiling
+      && window.active_drag().is_some_and(|drag| {
+        drag.operation == Some(wm_common::ActiveDragOperation::Resize)
+      })
+  });
+  if !is_live_resize {
+    return Ok(Vec::new());
+  }
+  let mut positions = Vec::new();
+  let mut updated = Vec::new();
+  let mut reveal = Vec::new();
+  for window in windows {
+    if window.state() != WindowState::Tiling
+      || window.display_state() != DisplayState::Shown
+      || !window
+        .workspace()
+        .is_some_and(|workspace| workspace.is_displayed())
+    {
+      continue;
+    }
+    if state
+      .animation_manager
+      .get_animation(&window.id())
+      .is_some()
+    {
+      state.animation_manager.remove_animation(&window.id());
+      reveal.push(window.clone());
+    }
+    let target = window
+      .to_rect()?
+      .apply_delta(&window.total_border_delta()?, None);
+    let Ok(actual) = window.native().frame_with_shadows() else {
+      continue;
+    };
+    if actual != target {
+      positions.push((window.native().clone(), target));
+    }
+    updated.push(window.id());
+  }
+  wm_platform::set_window_positions(&positions)?;
+  for window in reveal {
+    window.native().set_cloaked(false)?;
+  }
+  Ok(updated)
 }
 
 fn reposition_window(

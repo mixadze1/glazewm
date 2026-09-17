@@ -5,12 +5,11 @@
 
 use anyhow::Context;
 use wm_common::{ResizeEdges, TilingDirection};
-#[cfg(target_os = "windows")]
-use wm_platform::NativeWindowWindowsExt;
 use wm_platform::Rect;
 
 use crate::{
-  models::{TilingContainer, TilingWindow, WindowContainer},
+  commands::container::{minimum_length, refresh_tiling_minimums},
+  models::{TilingContainer, TilingWindow},
   traits::{
     CommonGetters, PositionGetters, TilingDirectionGetters,
     TilingSizeGetters, WindowGetters, MIN_TILING_SIZE,
@@ -24,40 +23,7 @@ pub(super) fn cache_resize_minimums(
   window: &TilingWindow,
 ) -> anyhow::Result<()> {
   let workspace = window.workspace().context("No workspace.")?;
-  for container in workspace.descendants() {
-    let Ok(WindowContainer::TilingWindow(window)) =
-      container.as_window_container()
-    else {
-      continue;
-    };
-    let current = window.to_rect()?;
-    #[cfg(target_os = "windows")]
-    let border_delta = window.total_border_delta()?;
-    #[cfg(target_os = "windows")]
-    let minimum = if window.native_properties().is_resizable {
-      window
-        .native()
-        .minimum_tracking_size()
-        .map(|(width, height)| {
-          Rect::from_xy(0, 0, width, height)
-            .apply_delta(&border_delta.inverse(), None)
-        })
-    } else {
-      None
-    }
-    .unwrap_or(current);
-    #[cfg(not(target_os = "windows"))]
-    let minimum = if window.native_properties().is_resizable {
-      Rect::from_xy(0, 0, 1, 1)
-    } else {
-      current
-    };
-    window.update_native_properties(|properties| {
-      properties.minimum_tiling_size =
-        Some((minimum.width().max(1), minimum.height().max(1)));
-    });
-  }
-  Ok(())
+  refresh_tiling_minimums(&workspace.into())
 }
 
 /// Move shared dividers while keeping the opposite edges fixed. Geometry
@@ -356,46 +322,6 @@ fn length(rect: &Rect, horizontal: bool) -> f32 {
   } else {
     rect.height()
   }) as f32
-}
-
-/// A split must preserve every descendant's minimum with its existing
-/// proportions, including gaps. A sum alone is insufficient for uneven
-/// splits.
-fn minimum_length(
-  container: &TilingContainer,
-  horizontal: bool,
-) -> anyhow::Result<f32> {
-  match container {
-    TilingContainer::TilingWindow(window) => {
-      let (width, height) = window
-        .native_properties()
-        .minimum_tiling_size
-        .unwrap_or((1, 1));
-      Ok((if horizontal { width } else { height }) as f32)
-    }
-    TilingContainer::Split(split) => {
-      let same_axis = (split.tiling_direction()
-        == TilingDirection::Horizontal)
-        == horizontal;
-      let children = split.tiling_children().collect::<Vec<_>>();
-      let mut minimum = 0.0_f32;
-      for child in &children {
-        let child_minimum = minimum_length(child, horizontal)?;
-        minimum = minimum.max(if same_axis {
-          // One pixel protects truncation in vertical layout geometry.
-          (child_minimum + 1.) / child.tiling_size().max(MIN_TILING_SIZE)
-        } else {
-          child_minimum
-        });
-      }
-      if same_axis {
-        let (gap_x, gap_y) = split.inner_gaps()?;
-        minimum += (if horizontal { gap_x } else { gap_y }) as f32
-          * children.len().saturating_sub(1) as f32;
-      }
-      Ok(minimum)
-    }
-  }
 }
 
 #[cfg(test)]

@@ -20,6 +20,10 @@ mod platform_impl;
 mod single_instance;
 mod thread_bound;
 mod window_listener;
+#[cfg(target_os = "windows")]
+mod window_position_batch;
+#[cfg(target_os = "windows")]
+pub use window_position_batch::set_window_positions;
 
 #[cfg(feature = "test_utils")]
 pub mod test_utils;
