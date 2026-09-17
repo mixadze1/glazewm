@@ -67,6 +67,7 @@ pub fn dwm_flush() {
 ///
 /// Returns `None` if the position cannot be queried. On non-Windows
 /// platforms this always returns `None`.
+#[must_use]
 pub fn cursor_position() -> Option<(i32, i32)> {
   #[cfg(target_os = "windows")]
   {
@@ -373,7 +374,7 @@ pub fn try_set_thread_mmcss() -> Option<MmcssGuard> {
 /// Sets the calling thread's scheduling priority to highest.
 ///
 /// Called at the start of the animation timer thread to reduce scheduling
-/// jitter between the DWM VSync wake-up and tick delivery to the Tokio
+/// jitter between the DWM `VSync` wake-up and tick delivery to the Tokio
 /// runtime. On non-Windows platforms this is a no-op.
 pub fn set_thread_priority_highest() {
   #[cfg(target_os = "windows")]

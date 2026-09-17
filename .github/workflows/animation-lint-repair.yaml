@@ -1,0 +1,33 @@
+name: Animation lint diagnostics
+on:
+  push:
+    branches: [feature/improves-animations]
+    paths: [.github/workflows/animation-lint-repair.yaml]
+permissions:
+  contents: read
+jobs:
+  diagnostics:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      VERSION_NUMBER: 3.10.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17
+        with:
+          toolchain: nightly
+          components: clippy, rustfmt
+      - uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3
+      - name: Collect suggested fixes
+        shell: bash
+        run: |
+          cargo clippy --fix --allow-dirty --all-targets --all-features
+          cargo fmt --all
+          git diff --binary > clippy-fixes.patch
+          cargo clippy --all-targets --all-features --message-format=json > clippy-diagnostics.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: animation-lint-diagnostics
+          path: |
+            clippy-fixes.patch
+            clippy-diagnostics.json
