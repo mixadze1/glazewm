@@ -66,6 +66,10 @@ pub struct PendingSync {
   pub(crate) workspace_switch_route: Option<(String, String)>,
   /// Reuse the active overlays when retargeting an unfinished slide.
   pub(crate) workspace_switch_continuing: bool,
+  /// Windows reparented this cycle; their screen-space move is
+  /// independent of the workspace camera when a subsequent command
+  /// follows them.
+  pub(crate) workspace_transfers: HashSet<Uuid>,
 
   /// Window IDs that just underwent a tiling/floating state change this
   /// sync cycle. Used by `platform_sync` to allow `window_move`
@@ -111,6 +115,7 @@ impl PendingSync {
     self.workspace_switch_direction = 0;
     self.workspace_switch_route = None;
     self.workspace_switch_continuing = false;
+    self.workspace_transfers.clear();
     self.window_state_changes.clear();
     self.iris_switch = None;
     self.animations_suppressed = false;

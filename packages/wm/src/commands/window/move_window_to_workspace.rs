@@ -88,6 +88,7 @@ pub fn move_window_to_workspace(
       .find(|descendant| descendant.state() == WindowState::Tiling);
 
     // Insert the window into the target workspace.
+    state.pending_sync.workspace_transfers.insert(window.id());
     match (window.is_tiling_window(), insertion_sibling.is_some()) {
       (true, true) => {
         if let Some(insertion_sibling) = insertion_sibling {

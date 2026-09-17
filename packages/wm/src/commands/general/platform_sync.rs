@@ -342,6 +342,45 @@ fn redraw_containers(
       }
 
       let direction = state.pending_sync.workspace_switch_direction();
+      // Hidden intermediate workspaces contribute thumbnails only. Their
+      // real windows stay hidden and never receive focus during the
+      // flight.
+      let mut transit_windows = Vec::new();
+      if ws_config.style == WorkspaceSwitchStyle::Slide {
+        if let Some((from, to)) =
+          &state.pending_sync.workspace_switch_route
+        {
+          if let (Some(from_index), Some(to_index), Some(destination)) = (
+            config.workspace_config_index(from),
+            config.workspace_config_index(to),
+            state.workspace_by_name(to),
+          ) {
+            let monitor_id =
+              destination.monitor().map(|monitor| monitor.id());
+            for workspace in state.workspaces() {
+              let index =
+                config.workspace_config_index(&workspace.config().name);
+              if index.is_some_and(|index| {
+                index > from_index.min(to_index)
+                  && index < from_index.max(to_index)
+              }) && workspace.monitor().map(|monitor| monitor.id())
+                == monitor_id
+              {
+                transit_windows.extend(
+                  workspace
+                    .descendants()
+                    .filter_map(|container| {
+                      container.as_window_container().ok()
+                    })
+                    .filter(|window| {
+                      window.state() != WindowState::Minimized
+                    }),
+                );
+              }
+            }
+          }
+        }
+      }
       // Only start a new workspace-switch animation when there are
       // actually incoming/outgoing windows in this sync (i.e., this
       // is the initial platform_sync for the switch, not a follow-up
@@ -352,12 +391,16 @@ fn redraw_containers(
           || state.pending_sync.is_workspace_switch_outgoing(&id)
       });
 
-      if has_ws_windows || state.pending_sync.workspace_switch_continuing {
+      if has_ws_windows
+        || !transit_windows.is_empty()
+        || state.pending_sync.workspace_switch_continuing
+      {
         let is_no_slide = ws_config.style.is_no_slide();
         let mut ws_windows: Vec<(
           uuid::Uuid,
           Option<WorkspaceSurrogate>,
           bool,
+          String,
         )> = Vec::new();
         let mut monitor_x = 0i32;
         let mut monitor_width = 0i32;
@@ -365,14 +408,25 @@ fn redraw_containers(
         let mut monitor_height = 0i32;
         let mut monitor_handle = 0isize;
 
-        for window in windows_to_update.iter() {
+        let transit_ids: std::collections::HashSet<_> =
+          transit_windows.iter().map(|window| window.id()).collect();
+        for window in windows_to_update
+          .iter()
+          .copied()
+          .chain(transit_windows.iter())
+          .unique_by(|window| window.id())
+        {
           let id = window.id();
+          if state.pending_sync.workspace_transfers.contains(&id) {
+            continue;
+          }
           let is_incoming =
             state.pending_sync.is_workspace_switch_incoming(&id);
           let is_outgoing =
             state.pending_sync.is_workspace_switch_outgoing(&id);
+          let is_transit = transit_ids.contains(&id);
 
-          if !is_incoming && !is_outgoing {
+          if !is_incoming && !is_outgoing && !is_transit {
             continue;
           }
 
@@ -395,6 +449,12 @@ fn redraw_containers(
           }
 
           let hwnd = window.native().hwnd();
+          let workspace_name = window
+            .workspace()
+            .context("No workspace for transition window.")?
+            .config()
+            .name
+            .clone();
 
           let effect_cfg = if window.id() == focused_container.id() {
             &config.value.window_effects.focused_window
@@ -407,7 +467,7 @@ fn redraw_containers(
             u8::MAX
           };
 
-          if is_incoming {
+          if is_incoming || is_transit {
             let surrogate = window
               .to_rect()
               .and_then(|r| {
@@ -441,7 +501,7 @@ fn redraw_containers(
             // Keep all incoming windows for end-of-transition cleanup.
             // Without a usable surrogate, reveal the real window normally
             // instead of freezing it behind an empty overlay.
-            ws_windows.push((id, surrogate, true));
+            ws_windows.push((id, surrogate, is_incoming, workspace_name));
           } else {
             let current = state
               .window_target_positions
@@ -467,14 +527,15 @@ fn redraw_containers(
               e
             })
             .ok();
-            ws_windows.push((id, surrogate, false));
+            ws_windows.push((id, surrogate, false, workspace_name));
           }
         }
 
-        let has_outgoing =
-          ws_windows.iter().any(|(_, _, is_incoming)| !*is_incoming);
+        let has_outgoing = ws_windows
+          .iter()
+          .any(|(_, _, is_incoming, _)| !*is_incoming);
         let has_incoming =
-          ws_windows.iter().any(|(_, _, is_incoming)| *is_incoming);
+          ws_windows.iter().any(|(_, _, is_incoming, _)| *is_incoming);
 
         // For slide styles, skip when direction == 0: workspace names were
         // not found in the config so the slide offset would be 0,
@@ -497,7 +558,10 @@ fn redraw_containers(
           // warm. For stationary (non-slide) styles, also show
           // incoming surrogates at their start opacity so DWM
           // warms their thumbnails before the loop.
-          for (_, ref mut surrogate, is_incoming) in &mut ws_windows {
+          for (id, ref mut surrogate, is_incoming, _) in &mut ws_windows {
+            if transit_ids.contains(id) {
+              continue;
+            }
             if let Some(s) = surrogate {
               if !*is_incoming {
                 s.show_initial();
@@ -640,8 +704,21 @@ fn redraw_containers(
     );
 
     // Get the previous target position before updating.
+    let is_workspace_transfer = state
+      .pending_sync
+      .workspace_transfers
+      .contains(&window.id());
     let previous_target =
       state.window_target_positions.get(&window.id()).cloned();
+    #[cfg(target_os = "windows")]
+    let previous_target = if is_workspace_transfer {
+      state
+        .animation_manager
+        .workspace_window_rect(&window.id())
+        .or(previous_target)
+    } else {
+      previous_target
+    };
 
     // Always record the latest target position.
     state
@@ -704,9 +781,10 @@ fn redraw_containers(
     // `true` for the full animation so that focus events during the slide
     // do not prematurely uncloak the real window.
     #[cfg(target_os = "windows")]
-    let is_frozen_by_ws_animation = state
-      .animation_manager
-      .is_workspace_switch_incoming(&window.id());
+    let is_frozen_by_ws_animation = !is_workspace_transfer
+      && state
+        .animation_manager
+        .is_workspace_switch_incoming(&window.id());
     #[cfg(not(target_os = "windows"))]
     let is_frozen_by_ws_animation = false;
 
@@ -805,7 +883,8 @@ fn redraw_containers(
           && !matches!(window.state(), WindowState::Minimized)
           && !suppress_animations
           && ((!is_floating && anim_enabled)
-            || (is_state_change && anim_enabled)
+            || ((is_state_change || is_workspace_transfer)
+              && anim_enabled)
             || has_slide_in)));
 
     // Determine the rect to use for this frame.
@@ -1106,6 +1185,21 @@ fn redraw_containers(
   // same DWM composition frame.
   #[cfg(target_os = "windows")]
   state.animation_manager.flush_surrogate_updates();
+
+  #[cfg(target_os = "windows")]
+  if state
+    .pending_sync
+    .workspace_transfers
+    .iter()
+    .any(|id| state.animation_manager.has_workspace_switch_window(id))
+  {
+    // The carried window's replacement overlay (or real window) must be
+    // composited before releasing its old workspace thumbnail.
+    wm_platform::dwm_flush();
+    for id in &state.pending_sync.workspace_transfers {
+      state.animation_manager.remove_workspace_window(id);
+    }
+  }
 
   // Apply effect opacity to outgoing surrogates now that the real windows
   // have been cloaked. This removes the double-blend that would occur if

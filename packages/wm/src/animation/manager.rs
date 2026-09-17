@@ -756,9 +756,42 @@ impl AnimationManager {
   }
 
   #[cfg(target_os = "windows")]
+  pub(crate) fn workspace_window_rect(&self, id: &Uuid) -> Option<Rect> {
+    let ws = self.workspace_switch.as_ref()?;
+    let entry = ws.windows.get(id)?;
+    let rect = &entry.surrogate.as_ref()?.rect;
+    let offset = entry.panel_position - ws.motion.as_ref()?.position;
+    let (dx, dy) = match ws.slide_direction {
+      WorkspaceSwitchDirection::Horizontal => {
+        ((offset * ws.slide_distance_h as f32) as i32, 0)
+      }
+      WorkspaceSwitchDirection::Vertical => {
+        (0, (offset * ws.slide_distance_v as f32) as i32)
+      }
+    };
+    Some(Rect::from_xy(
+      rect.x() + dx,
+      rect.y() + dy,
+      rect.width(),
+      rect.height(),
+    ))
+  }
+
+  /// Called after a replacement move/resize overlay has been prepared.
+  #[cfg(target_os = "windows")]
+  pub(crate) fn remove_workspace_window(&mut self, id: &Uuid) {
+    if let Some(ws) = &mut self.workspace_switch {
+      ws.windows.remove(id);
+    }
+    if let Some(ws) = &mut self.pending_ws_cleanup {
+      ws.windows.remove(id);
+    }
+  }
+
+  #[cfg(target_os = "windows")]
   pub(crate) fn retarget_workspace_switch(
     &mut self,
-    windows: Vec<(Uuid, Option<WorkspaceSurrogate>, bool)>,
+    windows: Vec<(Uuid, Option<WorkspaceSurrogate>, bool, String)>,
     route: (String, String),
     config: &UserConfig,
   ) {
@@ -770,14 +803,13 @@ impl AnimationManager {
     };
     let destination =
       config.workspace_config_index(&route.1).unwrap_or_default() as f32;
-    for (id, surrogate, is_incoming) in windows {
-      let name = if is_incoming { &route.1 } else { &route.0 };
+    for (id, surrogate, is_incoming, name) in windows {
       ws.windows
         .entry(id)
         .or_insert_with(|| WorkspaceSwitchEntry {
           workspace_name: name.clone(),
           panel_position: config
-            .workspace_config_index(name)
+            .workspace_config_index(&name)
             .unwrap_or_default() as f32,
           surrogate,
           is_incoming,
@@ -1838,7 +1870,7 @@ impl AnimationManager {
   #[cfg(target_os = "windows")]
   pub fn start_workspace_switch(
     &mut self,
-    windows: Vec<(Uuid, Option<WorkspaceSurrogate>, bool)>,
+    windows: Vec<(Uuid, Option<WorkspaceSurrogate>, bool, String)>,
     route: Option<(String, String)>,
     order_direction: i32,
     monitor_x: i32,
@@ -1865,12 +1897,7 @@ impl AnimationManager {
 
     let ws_windows: HashMap<Uuid, WorkspaceSwitchEntry> = windows
       .into_iter()
-      .map(|(id, surrogate, is_incoming)| {
-        let name = route
-          .as_ref()
-          .map(|(from, to)| if is_incoming { to } else { from })
-          .cloned()
-          .unwrap_or_default();
+      .map(|(id, surrogate, is_incoming, name)| {
         (
           id,
           WorkspaceSwitchEntry {
@@ -2387,7 +2414,7 @@ mod tests {
     manager.workspace_switch = Some(ws);
 
     for (from, to, additions) in [
-      ("2", "3", vec![(third, None, true)]),
+      ("2", "3", vec![(third, None, true, "3".into())]),
       ("3", "1", vec![]),
       ("1", "3", vec![]),
     ] {
@@ -2416,6 +2443,73 @@ mod tests {
         .filter(|entry| entry.is_incoming)
         .all(|entry| entry.workspace_name == to));
     }
+  }
+
+  #[test]
+  fn transit_panels_keep_their_workspace_identity_when_retargeted() {
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut manager = AnimationManager::new(tx);
+    let ids = [Uuid::new_v4(), Uuid::new_v4()];
+    let third = Uuid::new_v4();
+    let fourth = Uuid::new_v4();
+    let config = UserConfig::new(Some(
+      std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../resources/assets/sample-config.yaml"),
+    ))
+    .unwrap();
+    let mut ws = workspace_switch(ids);
+    ws.motion = Some(
+      super::super::workspace_motion::WorkspaceMotion::new(0.0, 1.0),
+    );
+    manager.workspace_switch = Some(ws);
+    manager.retarget_workspace_switch(
+      vec![
+        (third, None, false, "3".into()),
+        (fourth, None, true, "4".into()),
+      ],
+      ("2".into(), "4".into()),
+      &config,
+    );
+    let ws = manager.workspace_switch.as_ref().unwrap();
+    assert_eq!(ws.windows[&third].panel_position, 2.0);
+    assert_eq!(ws.windows[&fourth].panel_position, 3.0);
+    assert!(!ws.windows[&third].is_incoming);
+    manager.retarget_workspace_switch(
+      vec![],
+      ("4".into(), "3".into()),
+      &config,
+    );
+    let ws = manager.workspace_switch.as_ref().unwrap();
+    assert!(ws.windows[&third].is_incoming);
+    assert!(!ws.windows[&fourth].is_incoming);
+    assert_eq!(ws.windows.len(), 4);
+  }
+
+  #[test]
+  fn carrying_a_window_releases_only_its_workspace_thumbnail() {
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let mut manager = AnimationManager::new(tx);
+    let ids = [Uuid::new_v4(), Uuid::new_v4()];
+    manager.workspace_switch = Some(workspace_switch(ids));
+    manager.pending_ws_cleanup = Some(workspace_switch(ids));
+    manager
+      .pending_surrogate_updates
+      .push(PendingSurrogateUpdate {
+        window_id: ids[0],
+        rect: Rect::from_xy(0, 0, 640, 480),
+        opacity: u8::MAX,
+        handoff: true,
+      });
+    manager.remove_workspace_window(&ids[0]);
+    assert!(!manager.has_workspace_switch_window(&ids[0]));
+    assert!(manager.has_workspace_switch_window(&ids[1]));
+    assert_eq!(manager.pending_surrogate_updates.len(), 1);
+    assert!(!manager
+      .pending_ws_cleanup
+      .as_ref()
+      .unwrap()
+      .windows
+      .contains_key(&ids[0]));
   }
 
   #[test]
