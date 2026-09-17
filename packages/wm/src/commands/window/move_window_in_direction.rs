@@ -329,9 +329,12 @@ fn invert_workspace_tiling_direction(
   // up results in H[3 H[1 2]], and needs to be flattened to H[3 1 2].
   flatten_child_split_containers(&workspace.clone().into())?;
 
-  // Resize the window such that the split container and window are each
-  // 0.5.
-  resize_tiling_container(&window_to_move.into(), 0.5);
+  // Use the same insertion share as an ordinary move into this row or
+  // column. Flattening can expose more than two children; forcing 0.5
+  // here made the final size depend on the route taken to this layout.
+  #[allow(clippy::cast_precision_loss)]
+  let target_size = 1. / workspace.tiling_children().count() as f32;
+  resize_tiling_container(&window_to_move.into(), target_size);
 
   state
     .pending_sync
@@ -523,4 +526,68 @@ fn snap_to_monitor_edge(
   };
 
   window_pos.translate_to_coordinates(x, y)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::{commands::container::attach_container, models::Workspace};
+
+  fn move_from_nested_split(first: &Direction, last: &Direction) -> Rect {
+    let outside = TilingWindow::mock().call();
+    let moving = TilingWindow::mock().call();
+    let neighbor = TilingWindow::mock().call();
+    let split = SplitContainer::mock()
+      .tiling_direction(TilingDirection::from_direction(first))
+      .tiling_containers(vec![moving.clone().into(), neighbor.into()])
+      .call();
+    let children = if matches!(last, Direction::Right | Direction::Down) {
+      vec![outside.into(), split.into()]
+    } else {
+      vec![split.into(), outside.into()]
+    };
+    let workspace = Workspace::mock()
+      .tiling_direction(TilingDirection::from_direction(last))
+      .tiling_containers(children)
+      .call();
+    let monitor = Monitor::mock().workspaces(vec![workspace]).call();
+    let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let (tick_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let mut state = WmState::new(
+      wm_platform::Dispatcher::mock(),
+      event_tx,
+      exit_tx,
+      tick_tx,
+    );
+    attach_container(
+      &monitor.into(),
+      &state.root_container.clone().into(),
+      None,
+    )
+    .unwrap();
+    let config = UserConfig::new(Some(
+      std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../resources/assets/sample-config.yaml"),
+    ))
+    .unwrap();
+    move_tiling_window(moving.clone(), first, &mut state, &config)
+      .unwrap();
+    move_tiling_window(moving.clone(), last, &mut state, &config).unwrap();
+    moving.to_rect().unwrap()
+  }
+
+  #[test]
+  fn placement_size_is_independent_of_previous_move_direction() {
+    for (first, opposite, last) in [
+      (Direction::Up, Direction::Down, Direction::Left),
+      (Direction::Up, Direction::Down, Direction::Right),
+      (Direction::Left, Direction::Right, Direction::Up),
+      (Direction::Left, Direction::Right, Direction::Down),
+    ] {
+      let from_first = move_from_nested_split(&first, &last);
+      let from_opposite = move_from_nested_split(&opposite, &last);
+      assert_eq!(from_first, from_opposite);
+    }
+  }
 }
