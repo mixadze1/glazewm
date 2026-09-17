@@ -427,8 +427,9 @@ impl Default for AnimationsConfig {
 /// Spatial style for window open/close transitions.
 ///
 /// Used by both `WindowOpenConfig.style` and `WindowCloseConfig.style` so
-/// the same values apply symmetrically: a window that opens with `slide_right`
-/// (entering from the right) closes with `slide_right` (exiting to the right).
+/// the same values apply symmetrically: a window that opens with
+/// `slide_right` (entering from the right) closes with `slide_right`
+/// (exiting to the right).
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowTransitionStyle {
@@ -445,20 +446,20 @@ pub enum WindowTransitionStyle {
   /// Slide in/out from/to the bottom edge.
   #[serde(alias = "bottom")]
   SlideBottom,
-  /// No positional movement. Combine with `opacity_from`/`opacity_to` for a
-  /// pure fade. Accepts `"fade"` as a legacy alias.
+  /// No positional movement. Combine with `opacity_from`/`opacity_to` for
+  /// a pure fade. Accepts `"fade"` as a legacy alias.
   #[serde(alias = "fade")]
   None,
-  /// Zoom in/out from the window center. Combine with `opacity_from`/`opacity_to`
-  /// to also fade while zooming.
+  /// Zoom in/out from the window center. Combine with
+  /// `opacity_from`/`opacity_to` to also fade while zooming.
   Zoom,
 }
 
 impl WindowTransitionStyle {
   /// Returns `true` when the style has no positional slide component.
   ///
-  /// Stationary styles keep the surrogate at the window's final position for
-  /// the full animation; the surrogate window itself never moves.
+  /// Stationary styles keep the surrogate at the window's final position
+  /// for the full animation; the surrogate window itself never moves.
   pub fn is_stationary(&self) -> bool {
     matches!(self, Self::None | Self::Zoom)
   }
@@ -480,8 +481,9 @@ pub struct WindowOpenConfig {
   /// - `zoom`: zoom in from the window center.
   #[serde(alias = "type", alias = "direction")]
   pub style: WindowTransitionStyle,
-  /// Starting opacity (0.0–1.0). At `1.0` no fade is applied; at `0.0` the
-  /// window fades in from fully transparent. Can be combined with any style.
+  /// Starting opacity (0.0–1.0). At `1.0` no fade is applied; at `0.0`
+  /// the window fades in from fully transparent. Can be combined with
+  /// any style.
   #[serde(deserialize_with = "deserialize_unit_interval")]
   pub opacity_from: f32,
 }
@@ -514,12 +516,12 @@ pub struct WindowCloseConfig {
   /// - `none` / `fade` (default): no positional movement; combine with
   ///   `opacity_to` for a pure fade-out.
   /// - `zoom`: zoom out from the window center.
-  /// - `slide_right` / `slide_left` / `slide_top` / `slide_bottom`: slide off
-  ///   that edge.
+  /// - `slide_right` / `slide_left` / `slide_top` / `slide_bottom`: slide
+  ///   off that edge.
   #[serde(alias = "type")]
   pub style: WindowTransitionStyle,
-  /// Final opacity (0.0–1.0). At `0.0` the window fades to fully transparent;
-  /// at `1.0` no fade is applied.
+  /// Final opacity (0.0–1.0). At `0.0` the window fades to fully
+  /// transparent; at `1.0` no fade is applied.
   #[serde(deserialize_with = "deserialize_unit_interval")]
   pub opacity_to: f32,
 }
@@ -543,16 +545,18 @@ pub enum WorkspaceSwitchStyle {
   /// Workspaces slide along the axis set by `direction` (default).
   #[default]
   Slide,
-  /// Pure crossfade; no positional slide. Both surrogates stay in place and
-  /// their opacities are driven by `opacity_outgoing` / `opacity_incoming`.
+  /// Pure crossfade; no positional slide. Both surrogates stay in place
+  /// and their opacities are driven by `opacity_outgoing` /
+  /// `opacity_incoming`.
   Fade,
-  /// Outgoing workspace shrinks to the monitor center; incoming expands from
-  /// it. Opacities are also animated via `opacity_outgoing` / `opacity_incoming`.
+  /// Outgoing workspace shrinks to the monitor center; incoming expands
+  /// from it. Opacities are also animated via `opacity_outgoing` /
+  /// `opacity_incoming`.
   Zoom,
-  /// Iris wipe: a frozen snapshot of the outgoing workspace stays on top while
-  /// a circular hole grows from `iris_origin`, revealing the live incoming
-  /// workspace beneath. Requires Windows; falls back to an instant switch when
-  /// the monitor cannot be captured.
+  /// Iris wipe: a frozen snapshot of the outgoing workspace stays on top
+  /// while a circular hole grows from `iris_origin`, revealing the live
+  /// incoming workspace beneath. Requires Windows; falls back to an
+  /// instant switch when the monitor cannot be captured.
   Iris,
 }
 
@@ -579,8 +583,8 @@ pub enum WorkspaceSwitchIrisOrigin {
   /// Grow from the current mouse-cursor position.
   Cursor,
   /// Grow from the center of the newly focused window on the incoming
-  /// workspace. Falls back to the monitor center when the incoming workspace
-  /// has no focusable window.
+  /// workspace. Falls back to the monitor center when the incoming
+  /// workspace has no focusable window.
   FocusedWindow,
 }
 
@@ -597,9 +601,10 @@ pub enum WorkspaceSwitchDirection {
 
 /// Animation config for workspace-switch transitions.
 ///
-/// Outgoing workspaces translate off-screen (for the `slide` style) or stay in
-/// place (for `fade`/`zoom`) while the incoming workspace slides or crossfades
-/// in, all constrained to the monitor on which the switch occurs.
+/// Outgoing workspaces translate off-screen (for the `slide` style) or
+/// stay in place (for `fade`/`zoom`) while the incoming workspace slides
+/// or crossfades in, all constrained to the monitor on which the switch
+/// occurs.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all(serialize = "camelCase"))]
 pub struct WorkspaceSwitchAnimationConfig {
@@ -609,33 +614,36 @@ pub struct WorkspaceSwitchAnimationConfig {
   /// Motion type: `slide` (default), `fade`, `zoom`, or `iris`.
   #[serde(alias = "type")]
   pub style: WorkspaceSwitchStyle,
-  /// Slide axis when `style` is `slide`: `horizontal` (default) or `vertical`.
+  /// Slide axis when `style` is `slide`: `horizontal` (default) or
+  /// `vertical`.
   pub direction: WorkspaceSwitchDirection,
-  /// Origin of the iris circle when `style` is `iris`: `center` (default),
-  /// `cursor`, or `focused_window`. Ignored by other styles.
+  /// Origin of the iris circle when `style` is `iris`: `center`
+  /// (default), `cursor`, or `focused_window`. Ignored by other styles.
   pub iris_origin: WorkspaceSwitchIrisOrigin,
   /// Opacity at the end of the outgoing workspace's animation (0.0–1.0).
   ///
-  /// At `1.0` (default) the outgoing workspace stays fully opaque. At `0.0` it
-  /// fades out to transparent. Any value in between produces a partial fade.
-  /// Applies to all `style` values.
+  /// At `1.0` (default) the outgoing workspace stays fully opaque. At
+  /// `0.0` it fades out to transparent. Any value in between produces a
+  /// partial fade. Applies to all `style` values.
   #[serde(deserialize_with = "deserialize_unit_interval")]
   pub opacity_outgoing: f32,
-  /// Opacity at the start of the incoming workspace's animation (0.0–1.0).
+  /// Opacity at the start of the incoming workspace's animation
+  /// (0.0–1.0).
   ///
-  /// At `1.0` (default) the incoming workspace starts fully opaque. At `0.0`
-  /// it fades in from transparent. Any value in between produces a partial
-  /// fade. Applies to all `style` values.
+  /// At `1.0` (default) the incoming workspace starts fully opaque. At
+  /// `0.0` it fades in from transparent. Any value in between produces
+  /// a partial fade. Applies to all `style` values.
   #[serde(deserialize_with = "deserialize_unit_interval")]
   pub opacity_incoming: f32,
   /// Amount of workspace-level scale applied during `slide` transitions.
   ///
-  /// The outgoing workspace shrinks from `1.0` to `1.0 - zoom_factor` as it
-  /// exits; the incoming grows from `1.0 - zoom_factor` to `1.0` as it enters.
-  /// Scaling is from the monitor center so all windows move inward together,
-  /// preserving the workspace-as-a-panel illusion. Has no effect on `fade` or
-  /// `zoom` styles. Valid range: `0.0` (no zoom) to `1.0` (collapses to a
-  /// point). Recommended range: `0.05`–`0.15` for a subtle depth effect.
+  /// The outgoing workspace shrinks from `1.0` to `1.0 - zoom_factor` as
+  /// it exits; the incoming grows from `1.0 - zoom_factor` to `1.0` as
+  /// it enters. Scaling is from the monitor center so all windows move
+  /// inward together, preserving the workspace-as-a-panel illusion. Has
+  /// no effect on `fade` or `zoom` styles. Valid range: `0.0` (no zoom)
+  /// to `1.0` (collapses to a point). Recommended range: `0.05`–`0.15`
+  /// for a subtle depth effect.
   #[serde(deserialize_with = "deserialize_unit_interval")]
   pub zoom_factor: f32,
 }
@@ -709,17 +717,20 @@ impl Default for WindowResizeConfig {
 /// Named aliases map to their CSS cubic-bezier equivalents and can be used
 /// interchangeably with `cubic_bezier(x1, y1, x2, y2)` notation:
 /// `linear`, `ease_in`, `ease_out`, `ease_in_out`,
-/// `ease_in_cubic`, `ease_out_cubic`, `ease_in_out_cubic`, `ease_out_spring`.
+/// `ease_in_cubic`, `ease_out_cubic`, `ease_in_out_cubic`,
+/// `ease_out_spring`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum EasingFunction {
   /// CSS cubic bezier curve: `cubic_bezier(x1, y1, x2, y2)`.
   ///
-  /// Control points `(x1, y1)` and `(x2, y2)` define the shape between the
-  /// implicit anchors `(0, 0)` and `(1, 1)`. `x1` and `x2` must be in
-  /// `[0, 1]`; `y1` and `y2` may exceed that range to produce overshoot.
+  /// Control points `(x1, y1)` and `(x2, y2)` define the shape between
+  /// the implicit anchors `(0, 0)` and `(1, 1)`. `x1` and `x2` must be
+  /// in `[0, 1]`; `y1` and `y2` may exceed that range to produce
+  /// overshoot.
   CubicBezier(f32, f32, f32, f32),
-  /// Exponentially-decaying spring. Overshoots past 1.0 and oscillates before
-  /// settling. Runs to full wall-clock duration to preserve the bounce.
+  /// Exponentially-decaying spring. Overshoots past 1.0 and oscillates
+  /// before settling. Runs to full wall-clock duration to preserve the
+  /// bounce.
   EaseOutSpring,
 }
 
@@ -732,11 +743,12 @@ impl Default for EasingFunction {
 impl Eq for EasingFunction {}
 
 impl EasingFunction {
-  /// Returns `true` when this function can produce values outside `[0, 1]`.
+  /// Returns `true` when this function can produce values outside `[0,
+  /// 1]`.
   ///
   /// Non-overshooting functions are cut off at 99% eased progress to avoid
-  /// the "stuck at destination" look. Overshooting ones run to full wall-clock
-  /// duration to preserve their bounce.
+  /// the "stuck at destination" look. Overshooting ones run to full
+  /// wall-clock duration to preserve their bounce.
   pub fn can_overshoot(&self) -> bool {
     match self {
       EasingFunction::EaseOutSpring => true,
@@ -825,8 +837,8 @@ impl Serialize for EasingFunction {
     match self {
       EasingFunction::EaseOutSpring => s.serialize_str("ease_out_spring"),
       EasingFunction::CubicBezier(x1, y1, x2, y2) => {
-        // Serialize back to a named alias when the control points match exactly,
-        // so round-tripped configs stay human-readable.
+        // Serialize back to a named alias when the control points match
+        // exactly, so round-tripped configs stay human-readable.
         let repr = if *x1 == 0.0 && *y1 == 0.0 && *x2 == 1.0 && *y2 == 1.0
         {
           "linear".to_string()

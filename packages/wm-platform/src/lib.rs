@@ -1,4 +1,4 @@
-﻿#![warn(clippy::all, clippy::pedantic)]
+#![warn(clippy::all, clippy::pedantic)]
 #![allow(clippy::missing_errors_doc)]
 #![feature(iterator_try_collect)]
 
@@ -45,7 +45,6 @@ pub use workspace_surrogate::WorkspaceSurrogate;
 mod native_iris_overlay;
 #[cfg(target_os = "windows")]
 pub use native_iris_overlay::NativeIrisOverlay;
-
 pub use platform_event::*;
 pub use single_instance::*;
 pub use thread_bound::*;
@@ -66,8 +65,8 @@ pub fn dwm_flush() {
 
 /// Returns the current cursor position in virtual-screen pixels.
 ///
-/// Returns `None` if the position cannot be queried. On non-Windows platforms
-/// this always returns `None`.
+/// Returns `None` if the position cannot be queried. On non-Windows
+/// platforms this always returns `None`.
 pub fn cursor_position() -> Option<(i32, i32)> {
   #[cfg(target_os = "windows")]
   {
@@ -102,15 +101,18 @@ pub struct DxgiVsyncWaiter {
   monitor_handle: isize,
   /// Monitor refresh period in microseconds, shared across clones.
   ///
-  /// Initialized from `query_frame_period_us`; refined downward in `wait` if
-  /// the measured vblank delta is smaller (truer). Defaults to `16_667` (60 Hz).
+  /// Initialized from `query_frame_period_us`; refined downward in `wait`
+  /// if the measured vblank delta is smaller (truer). Defaults to
+  /// `16_667` (60 Hz).
   period_us: std::sync::Arc<std::sync::atomic::AtomicU64>,
   /// Timestamp of the most recent successful `WaitForVBlank` wake-up.
   ///
   /// Written by the timer thread immediately after vsync fires. Read by
-  /// `predictive_vsync_now` to lead the animation clock by a fraction of a
-  /// frame so the computed position aligns with the next DWM composition.
-  pub last_wake: std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>>,
+  /// `predictive_vsync_now` to lead the animation clock by a fraction of
+  /// a frame so the computed position aligns with the next DWM
+  /// composition.
+  pub last_wake:
+    std::sync::Arc<std::sync::Mutex<Option<std::time::Instant>>>,
 }
 
 #[cfg(target_os = "windows")]
@@ -133,8 +135,8 @@ impl DxgiVsyncWaiter {
     use windows::Win32::Graphics::Gdi::{
       MonitorFromWindow, MONITOR_DEFAULTTONEAREST,
     };
-    // SAFETY: `MonitorFromWindow` accepts any `HWND`; invalid handles yield
-    // a null `HMONITOR`.
+    // SAFETY: `MonitorFromWindow` accepts any `HWND`; invalid handles
+    // yield a null `HMONITOR`.
     unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) }.0
   }
 
@@ -143,11 +145,9 @@ impl DxgiVsyncWaiter {
   /// Enumerates all DXGI adapters and their outputs. Returns `Err` when
   /// DXGI is unavailable or no output matches the given handle.
   pub fn for_monitor(monitor_handle: isize) -> crate::Result<Self> {
-    use windows::Win32::{
-      Graphics::{
-        Dxgi::{CreateDXGIFactory, IDXGIFactory, DXGI_OUTPUT_DESC},
-        Gdi::HMONITOR,
-      },
+    use windows::Win32::Graphics::{
+      Dxgi::{CreateDXGIFactory, IDXGIFactory, DXGI_OUTPUT_DESC},
+      Gdi::HMONITOR,
     };
 
     // SAFETY: No preconditions for `CreateDXGIFactory`.
@@ -164,8 +164,9 @@ impl DxgiVsyncWaiter {
           break; // No more outputs on this adapter.
         };
         let mut desc = DXGI_OUTPUT_DESC::default();
-        // SAFETY: `output` is a valid `IDXGIOutput`; `desc` is stack-allocated
-        // and passed as an out-parameter per the windows-rs 0.52 convention.
+        // SAFETY: `output` is a valid `IDXGIOutput`; `desc` is
+        // stack-allocated and passed as an out-parameter per the
+        // windows-rs 0.52 convention.
         if unsafe { output.GetDesc(&mut desc) }.is_ok()
           && desc.Monitor == HMONITOR(monitor_handle)
         {
@@ -186,7 +187,8 @@ impl DxgiVsyncWaiter {
     Err(crate::Error::DisplayNotFound)
   }
 
-  /// Locates the `IDXGIOutput` for the monitor that `hwnd` currently occupies.
+  /// Locates the `IDXGIOutput` for the monitor that `hwnd` currently
+  /// occupies.
   ///
   /// Delegates to [`window_monitor`] then [`for_monitor`]. Returns `Err`
   /// when DXGI is unavailable or no output matches the window's monitor.
@@ -199,12 +201,12 @@ impl DxgiVsyncWaiter {
     Self::for_monitor(Self::window_monitor(hwnd))
   }
 
-  /// Queries the current refresh period (microseconds per vblank) for the GDI
-  /// device named by `device_name`.
+  /// Queries the current refresh period (microseconds per vblank) for the
+  /// GDI device named by `device_name`.
   ///
   /// Reads the active display mode via `EnumDisplaySettingsW`. Returns the
-  /// 60 Hz period (`16_667`) when the rate is unavailable or reported as the
-  /// hardware-default sentinel (`0` or `1`).
+  /// 60 Hz period (`16_667`) when the rate is unavailable or reported as
+  /// the hardware-default sentinel (`0` or `1`).
   fn query_frame_period_us(device_name: &[u16; 32]) -> u64 {
     use windows::{
       core::PCWSTR,
@@ -221,8 +223,8 @@ impl DxgiVsyncWaiter {
     };
 
     // SAFETY: `device_name` is a null-terminated wide string from
-    // `DXGI_OUTPUT_DESC`; `devmode` is stack-allocated with `dmSize` set per
-    // the `EnumDisplaySettingsW` contract.
+    // `DXGI_OUTPUT_DESC`; `devmode` is stack-allocated with `dmSize` set
+    // per the `EnumDisplaySettingsW` contract.
     let ok = unsafe {
       EnumDisplaySettingsW(
         PCWSTR(device_name.as_ptr()),
@@ -276,8 +278,8 @@ impl DxgiVsyncWaiter {
 ///
 /// Obtain via [`try_set_thread_mmcss`]. Dropping this guard calls
 /// `AvRevertMmThread`, restoring the thread to normal scheduling. This
-/// ensures cleanup even if the animation thread exits through an early-return
-/// path.
+/// ensures cleanup even if the animation thread exits through an
+/// early-return path.
 #[cfg(target_os = "windows")]
 pub struct MmcssGuard(isize);
 
@@ -309,13 +311,14 @@ impl Drop for MmcssGuard {
       return;
     };
 
-    // SAFETY: `self.0` is a valid AVRT handle from `AvSetMmThreadCharacteristicsW`.
+    // SAFETY: `self.0` is a valid AVRT handle from
+    // `AvSetMmThreadCharacteristicsW`.
     unsafe { f(self.0) };
   }
 }
 
-/// Registers the calling thread with the Multimedia Class Scheduler Service
-/// (MMCSS) for display post-processing.
+/// Registers the calling thread with the Multimedia Class Scheduler
+/// Service (MMCSS) for display post-processing.
 ///
 /// MMCSS gives the thread near-real-time scheduling guarantees beyond
 /// `THREAD_PRIORITY_HIGHEST`, reducing OS scheduling jitter after a vsync
@@ -339,8 +342,7 @@ pub fn try_set_thread_mmcss() -> Option<MmcssGuard> {
   let f = (*FN.get_or_init(|| {
     // SAFETY: `avrt.dll` is a standard system library present on Vista+.
     unsafe {
-      let module =
-        LoadLibraryW(windows::core::w!("avrt.dll")).ok()?;
+      let module = LoadLibraryW(windows::core::w!("avrt.dll")).ok()?;
       let proc = GetProcAddress(
         module,
         windows::core::s!("AvSetMmThreadCharacteristicsW"),
@@ -383,7 +385,8 @@ pub fn set_thread_priority_highest() {
     // lifetime of the calling thread. `SetThreadPriority` has no
     // preconditions beyond a valid handle and a recognised priority value.
     unsafe {
-      let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+      let _ =
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
     }
   }
 }

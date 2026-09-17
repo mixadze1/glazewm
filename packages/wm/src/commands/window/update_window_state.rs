@@ -29,8 +29,9 @@ pub fn update_window_state(
     return Ok(window);
   }
 
-  // Mark for state-change animation so `platform_sync` allows a `window_move`
-  // animation across the tiling/floating boundary for this window.
+  // Mark for state-change animation so `platform_sync` allows a
+  // `window_move` animation across the tiling/floating boundary for this
+  // window.
   state.pending_sync.mark_window_state_change(window.id());
 
   info!("Updating window state: {:?}.", target_state);
@@ -165,10 +166,14 @@ fn set_non_tiling(
       window.set_state(target_state.clone());
       state.pending_sync.queue_container_to_redraw(window.clone());
 
-      // Mark as fullscreen immediately to ensure browser APIs work during animation.
+      // Mark as fullscreen immediately to ensure browser APIs work during
+      // animation.
       if matches!(target_state, WindowState::Fullscreen(_)) {
         if let Err(err) = window.native().mark_fullscreen(true) {
-          warn!("Failed to mark window as fullscreen immediately: {}", err);
+          warn!(
+            "Failed to mark window as fullscreen immediately: {}",
+            err
+          );
         }
       }
 
@@ -210,10 +215,15 @@ fn set_non_tiling(
         .queue_containers_to_redraw(workspace.tiling_children())
         .queue_workspace_to_reorder(workspace);
 
-      // Mark as fullscreen immediately to ensure browser APIs work during animation.
+      // Mark as fullscreen immediately to ensure browser APIs work during
+      // animation.
       if matches!(target_state, WindowState::Fullscreen(_)) {
-        if let Err(err) = non_tiling_window.native().mark_fullscreen(true) {
-          warn!("Failed to mark window as fullscreen immediately: {}", err);
+        if let Err(err) = non_tiling_window.native().mark_fullscreen(true)
+        {
+          warn!(
+            "Failed to mark window as fullscreen immediately: {}",
+            err
+          );
         }
       }
 

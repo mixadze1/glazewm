@@ -9,10 +9,10 @@ use crate::{
 
 /// A pending iris-wipe workspace switch requested by `focus_workspace`.
 ///
-/// Carries the monitor geometry and the circle origin (all in screen pixels)
-/// so `platform_sync` can snapshot the monitor and start the overlay before the
-/// real windows are switched underneath. Stored as primitives to avoid coupling
-/// `PendingSync` to platform types.
+/// Carries the monitor geometry and the circle origin (all in screen
+/// pixels) so `platform_sync` can snapshot the monitor and start the
+/// overlay before the real windows are switched underneath. Stored as
+/// primitives to avoid coupling `PendingSync` to platform types.
 #[derive(Debug, Clone, Copy)]
 pub struct IrisSwitchRequest {
   pub monitor_x: i32,
@@ -57,27 +57,29 @@ pub struct PendingSync {
   /// Slide direction for the current workspace switch.
   ///
   /// `+1` means the target workspace has a higher config index (incoming
-  /// slides in from the right, outgoing slides out to the left). `-1` means
-  /// the opposite. `0` means no directional preference (fade in place).
+  /// slides in from the right, outgoing slides out to the left). `-1`
+  /// means the opposite. `0` means no directional preference (fade in
+  /// place).
   workspace_switch_direction: i32,
 
-  /// Window IDs that just underwent a tiling/floating state change this sync
-  /// cycle. Used by `platform_sync` to allow `window_move` animations across
-  /// the state boundary (e.g. tiling → floating or floating → tiling).
+  /// Window IDs that just underwent a tiling/floating state change this
+  /// sync cycle. Used by `platform_sync` to allow `window_move`
+  /// animations across the state boundary (e.g. tiling → floating or
+  /// floating → tiling).
   window_state_changes: HashSet<Uuid>,
 
-  /// Pending iris-wipe workspace switch, consumed by `platform_sync` to create
-  /// the snapshot overlay before the real windows are switched.
+  /// Pending iris-wipe workspace switch, consumed by `platform_sync` to
+  /// create the snapshot overlay before the real windows are switched.
   iris_switch: Option<IrisSwitchRequest>,
 
   /// Whether animations should be skipped for this sync cycle.
   ///
   /// Set on display setting changes: animating a relayout caused by a
   /// resolution or working-area change is visually meaningless, and the
-  /// cloak/surrogate mechanism would kick exclusive-fullscreen games out of
-  /// fullscreen (reverting the resolution and re-triggering the event in a
-  /// loop). In-flight animations of redrawn windows are cancelled and their
-  /// windows snap to their target rect.
+  /// cloak/surrogate mechanism would kick exclusive-fullscreen games out
+  /// of fullscreen (reverting the resolution and re-triggering the
+  /// event in a loop). In-flight animations of redrawn windows are
+  /// cancelled and their windows snap to their target rect.
   animations_suppressed: bool,
 }
 
@@ -196,13 +198,15 @@ impl PendingSync {
     &self.workspaces_to_reorder
   }
 
-  /// Marks a window as having just changed tiling/floating state this cycle.
+  /// Marks a window as having just changed tiling/floating state this
+  /// cycle.
   pub fn mark_window_state_change(&mut self, id: Uuid) -> &mut Self {
     self.window_state_changes.insert(id);
     self
   }
 
-  /// Returns `true` if the window changed tiling/floating state this cycle.
+  /// Returns `true` if the window changed tiling/floating state this
+  /// cycle.
   pub fn is_window_state_change(&self, id: &Uuid) -> bool {
     self.window_state_changes.contains(id)
   }
@@ -263,8 +267,8 @@ impl PendingSync {
     self.iris_switch.take()
   }
 
-  /// Suppresses animations for this sync cycle (see `animations_suppressed`
-  /// field docs).
+  /// Suppresses animations for this sync cycle (see
+  /// `animations_suppressed` field docs).
   pub fn suppress_animations(&mut self) -> &mut Self {
     self.animations_suppressed = true;
     self

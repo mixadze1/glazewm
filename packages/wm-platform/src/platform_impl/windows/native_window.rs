@@ -29,9 +29,8 @@ use windows::{
         SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPlacement,
         SetWindowPos, ShowWindowAsync, WindowFromPoint, GA_ROOT,
         GWL_EXSTYLE, GWL_STYLE, GW_HWNDPREV, GW_OWNER, HWND_NOTOPMOST,
-        HWND_TOP,
-        HWND_TOPMOST, LAYERED_WINDOW_ATTRIBUTES_FLAGS, LWA_ALPHA,
-        LWA_COLORKEY, SET_WINDOW_POS_FLAGS, SWP_ASYNCWINDOWPOS,
+        HWND_TOP, HWND_TOPMOST, LAYERED_WINDOW_ATTRIBUTES_FLAGS,
+        LWA_ALPHA, LWA_COLORKEY, SET_WINDOW_POS_FLAGS, SWP_ASYNCWINDOWPOS,
         SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOCOPYBITS, SWP_NOMOVE,
         SWP_NOOWNERZORDER, SWP_NOSENDCHANGING, SWP_NOSIZE, SWP_NOZORDER,
         SWP_SHOWWINDOW, SW_HIDE, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE,
@@ -585,10 +584,10 @@ impl NativeWindow {
       return Ok(());
     }
 
-    // `SWP_NOCOPYBITS` is deliberately omitted: the window does not move or
-    // resize, so its bits are unchanged — discarding them would force a
-    // full repaint of the client area, which flickers on slow-painting
-    // apps.
+    // `SWP_NOCOPYBITS` is deliberately omitted: the window does not move
+    // or resize, so its bits are unchanged — discarding them would
+    // force a full repaint of the client area, which flickers on
+    // slow-painting apps.
     let flags = SWP_NOACTIVATE
       | SWP_ASYNCWINDOWPOS
       | SWP_SHOWWINDOW
