@@ -63,7 +63,13 @@ try {
             }
         }
         try {
-            foreach ($name in $binaries) { Copy-Item -LiteralPath (Join-Path $outputDir $name) -Destination $installDir -Force }
+            foreach ($name in $binaries) {
+                $destination = Join-Path $installDir $name
+                if (Test-Path -LiteralPath $destination) {
+                    Move-Item -LiteralPath $destination -Destination (Join-Path $backupDir ('retired-' + $name))
+                }
+                Copy-Item -LiteralPath (Join-Path $outputDir $name) -Destination $destination
+            }
             $commit = & git rev-parse HEAD
             @("Local $Mode build", "Commit: $commit", "Built: $(Get-Date -Format o)", "Backup: $backupDir") | Set-Content -LiteralPath (Join-Path $installDir 'BUILD.txt')
             Start-Process -FilePath $installedExe -WindowStyle Hidden

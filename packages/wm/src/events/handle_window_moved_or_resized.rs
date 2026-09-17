@@ -520,13 +520,17 @@ fn update_drag_state(
       let actual = window.native().frame_with_shadows()?;
       if has_size_drift(&actual, &target) {
         use wm_platform::{
-          WindowZOrder, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSENDCHANGING,
-          SWP_NOZORDER,
+          WindowZOrder, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE,
+          SWP_NOSENDCHANGING, SWP_NOZORDER,
         };
         window.native().set_window_pos(
           &WindowZOrder::Normal,
           &target,
-          SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSENDCHANGING | SWP_NOZORDER,
+          SWP_ASYNCWINDOWPOS
+            | SWP_NOACTIVATE
+            | SWP_NOMOVE
+            | SWP_NOSENDCHANGING
+            | SWP_NOZORDER,
         )?;
       }
     }
