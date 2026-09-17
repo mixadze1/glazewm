@@ -3,13 +3,14 @@ use anyhow::Context;
 use wm_common::try_warn;
 use wm_platform::{MouseButton, MouseEvent};
 
-use crate::{
-  commands::container::set_focused_descendant, traits::CommonGetters,
-  user_config::UserConfig, wm_state::WmState,
-};
 #[cfg(target_os = "macos")]
+use crate::events::handle_window_moved_or_resized_end;
 use crate::{
-  events::handle_window_moved_or_resized_end, traits::WindowGetters,
+  commands::container::set_focused_descendant,
+  events::{handle_window_moved_or_resized, preview_tiling_drag},
+  traits::{CommonGetters, WindowGetters},
+  user_config::UserConfig,
+  wm_state::WmState,
 };
 
 pub fn handle_mouse_move(
@@ -64,6 +65,33 @@ pub fn handle_mouse_move(
     ..
   } = event
   {
+    if config.value.window_behavior.live_drag_reordering
+      && pressed_buttons.contains(&MouseButton::Left)
+    {
+      for window in state
+        .windows()
+        .into_iter()
+        .filter(|w| w.active_drag().is_some())
+      {
+        handle_window_moved_or_resized(
+          &window.native(),
+          false,
+          false,
+          state,
+          config,
+        )?;
+        // Some native move loops leave the window frame unchanged until
+        // release. Cursor-driven preview must not depend on frame events.
+        if window.state() == wm_common::WindowState::Tiling
+          && window.active_drag().is_some_and(|drag| {
+            drag.operation == Some(wm_common::ActiveDragOperation::Move)
+          })
+        {
+          preview_tiling_drag(&window, state, config)?;
+        }
+      }
+      return Ok(());
+    }
     // Ignore event if left/right-click is down. Otherwise, this causes
     // focus to jitter when a window is being resized by its drag
     // handles. Also ignore if the OS focused window isn't the same as

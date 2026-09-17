@@ -155,7 +155,9 @@ async fn start_wm(
   let mut window_listener = WindowListener::new(dispatcher)?;
   let mut display_listener = DisplayListener::new(dispatcher)?;
   let mut mouse_listener = MouseListener::new(
-    if config.value.general.focus_follows_cursor {
+    if config.value.general.focus_follows_cursor
+      || config.value.window_behavior.live_drag_reordering
+    {
       &[MouseEventKind::Move, MouseEventKind::LeftButtonUp]
     } else {
       &[MouseEventKind::LeftButtonUp]
@@ -274,7 +276,7 @@ async fn start_wm(
           );
 
           mouse_listener.set_enabled_events(
-            if config.value.general.focus_follows_cursor {
+            if config.value.general.focus_follows_cursor || config.value.window_behavior.live_drag_reordering {
               &[MouseEventKind::Move, MouseEventKind::LeftButtonUp]
             } else {
               &[MouseEventKind::LeftButtonUp]

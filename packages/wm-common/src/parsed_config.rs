@@ -169,6 +169,9 @@ pub struct KeybindingConfig {
 pub struct WindowBehaviorConfig {
   /// Reorder tiling slots while moving a tiled window with the mouse.
   pub live_drag_reordering: bool,
+
+  /// Restore the layout size when a tiled application resizes itself.
+  pub enforce_tiling_size: bool,
   /// New windows are created in this state whenever possible.
   pub initial_state: InitialWindowState,
 
@@ -182,6 +185,7 @@ impl Default for WindowBehaviorConfig {
   fn default() -> Self {
     Self {
       live_drag_reordering: true,
+      enforce_tiling_size: true,
       initial_state: InitialWindowState::default(),
       state_defaults: WindowStateDefaultsConfig::default(),
     }

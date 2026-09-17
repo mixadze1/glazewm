@@ -156,6 +156,9 @@ pub trait NativeWindowWindowsExt {
   /// This method is only available on Windows.
   fn hwnd(&self) -> HWND;
 
+  /// Classifies the native caption/resize grip at the start of a drag.
+  fn drag_is_resize(&self, point: &crate::Point) -> Option<bool>;
+
   /// Gets the class name of the window.
   ///
   /// # Platform-specific
@@ -344,6 +347,37 @@ impl NativeWindowWindowsExt for NativeWindow {
 
   fn hwnd(&self) -> HWND {
     self.inner.hwnd()
+  }
+
+  fn drag_is_resize(&self, point: &crate::Point) -> Option<bool> {
+    use windows::Win32::{
+      Foundation::{LPARAM, WPARAM},
+      UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_NCHITTEST,
+      },
+    };
+    let packed =
+      ((point.y as u32 & 0xffff) << 16) | (point.x as u32 & 0xffff);
+    let mut hit = 0usize;
+    let result = unsafe {
+      SendMessageTimeoutW(
+        self.hwnd(),
+        WM_NCHITTEST,
+        WPARAM(0),
+        LPARAM(packed as isize),
+        SMTO_ABORTIFHUNG,
+        50,
+        Some(&mut hit),
+      )
+    };
+    if result.0 == 0 {
+      return None;
+    }
+    match hit {
+      2 => Some(false),      // HTCAPTION
+      10..=17 => Some(true), // HTLEFT through HTBOTTOMRIGHT
+      _ => None,
+    }
   }
 
   fn class_name(&self) -> crate::Result<String> {

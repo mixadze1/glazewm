@@ -16,7 +16,7 @@ use crate::{
   },
   events::{handle_window_moved_or_resized_end, preview_tiling_drag},
   models::{Monitor, NonTilingWindow, WindowContainer},
-  traits::{CommonGetters, WindowGetters},
+  traits::{CommonGetters, PositionGetters, WindowGetters},
   user_config::UserConfig,
   wm_state::WmState,
 };
@@ -88,10 +88,11 @@ pub fn handle_window_moved_or_resized(
         .is_none()
       && state.window_target_positions.get(&window.id()).is_some_and(
         |target| {
-          window
-            .native()
-            .frame_with_shadows()
-            .is_ok_and(|actual| has_position_drift(&actual, target))
+          window.native().frame_with_shadows().is_ok_and(|actual| {
+            has_position_drift(&actual, target)
+              || (config.value.window_behavior.enforce_tiling_size
+                && has_size_drift(&actual, target))
+          })
         },
       );
     #[cfg(not(target_os = "windows"))]
@@ -200,13 +201,33 @@ pub fn handle_window_moved_or_resized(
         .insert(window.id(), frame_position.clone());
 
       window.set_active_drag(Some(ActiveDrag {
+        #[cfg(target_os = "windows")]
+        operation: state
+          .dispatcher
+          .cursor_position()
+          .ok()
+          .and_then(|cursor| window.native().drag_is_resize(&cursor))
+          .map(|resize| {
+            if resize {
+              ActiveDragOperation::Resize
+            } else {
+              ActiveDragOperation::Move
+            }
+          }),
+        #[cfg(not(target_os = "windows"))]
         operation: None,
         is_from_floating: matches!(
           window.state(),
           WindowState::Floating(_)
         ),
         #[cfg(target_os = "windows")]
-        initial_position: old_frame_position.clone(),
+        initial_position: if window.state() == WindowState::Tiling
+          && config.value.window_behavior.enforce_tiling_size
+        {
+          window.to_rect()?
+        } else {
+          old_frame_position.clone()
+        },
         // The updated frame position is used here instead of the initial
         // frame position due to a quirk on macOS. When we resize an
         // AXUIElement to a value outside the allowed min/max width &
@@ -381,10 +402,14 @@ pub fn handle_window_moved_or_resized(
       }
       WindowState::Tiling if position_drifted => {
         tracing::debug!(
-          "Correcting unsolicited tiling window move: {window}"
+          "Correcting unsolicited tiling window geometry: {window}"
         );
         state.animation_manager.remove_animation(&window.id());
-        state.pending_sync.queue_container_to_redraw(window);
+        if let Some(target) =
+          state.window_target_positions.get(&window.id())
+        {
+          window.native().set_frame(target)?;
+        }
       }
       _ => {}
     }
@@ -460,9 +485,10 @@ fn update_drag_state(
   let is_move = if let Some(operation) = active_drag.operation {
     matches!(operation, ActiveDragOperation::Move)
   } else {
-    let is_move = *frame_position != active_drag.initial_position
-      && frame_position.height() == active_drag.initial_position.height()
-      && frame_position.width() == active_drag.initial_position.width();
+    let is_move = moved_without_fixed_corner(
+      &active_drag.initial_position,
+      frame_position,
+    );
 
     let operation = if is_move {
       ActiveDragOperation::Move
@@ -486,6 +512,16 @@ fn update_drag_state(
     && window.state() == WindowState::Tiling
     && config.value.window_behavior.live_drag_reordering
   {
+    #[cfg(target_os = "windows")]
+    if config.value.window_behavior.enforce_tiling_size {
+      let target = active_drag
+        .initial_position
+        .apply_delta(&window.total_border_delta()?, None);
+      let actual = window.native().frame_with_shadows()?;
+      if has_size_drift(&actual, &target) {
+        window.native().resize(target.width(), target.height())?;
+      }
+    }
     if frame_position
       .center_point()
       .distance_between(&active_drag.initial_position.center_point())
@@ -595,11 +631,52 @@ fn has_position_drift(actual: &Rect, target: &Rect) -> bool {
     || (i64::from(actual.y()) - i64::from(target.y())).abs() > 1
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn has_size_drift(actual: &Rect, target: &Rect) -> bool {
+  (i64::from(actual.width()) - i64::from(target.width())).abs() > 1
+    || (i64::from(actual.height()) - i64::from(target.height())).abs() > 1
+}
+
+fn moved_without_fixed_corner(initial: &Rect, current: &Rect) -> bool {
+  let fixed_x =
+    initial.left == current.left || initial.right == current.right;
+  let fixed_y =
+    initial.top == current.top || initial.bottom == current.bottom;
+  !(fixed_x && fixed_y)
+}
+
 #[cfg(test)]
 mod tests {
   use wm_platform::Rect;
 
-  use super::{has_position_drift, is_in_corner};
+  use super::{
+    has_position_drift, has_size_drift, is_in_corner,
+    moved_without_fixed_corner,
+  };
+
+  #[test]
+  fn moving_a_window_that_enforces_its_minimum_is_still_a_move() {
+    let initial = Rect::from_xy(100, 100, 500, 700);
+    let moved = Rect::from_xy(140, 150, 960, 700);
+    assert!(moved_without_fixed_corner(&initial, &moved));
+    assert!(has_size_drift(&moved, &initial));
+    assert!(!moved_without_fixed_corner(
+      &initial,
+      &Rect::from_xy(100, 100, 960, 700)
+    ));
+    assert!(!moved_without_fixed_corner(
+      &initial,
+      &Rect::from_xy(80, 100, 520, 700)
+    ));
+    assert!(!moved_without_fixed_corner(
+      &initial,
+      &Rect::from_xy(80, 80, 520, 720)
+    ));
+    assert!(!has_size_drift(
+      &Rect::from_xy(100, 100, 501, 699),
+      &initial
+    ));
+  }
 
   #[test]
   fn detects_window_restoring_onto_its_neighbor() {
