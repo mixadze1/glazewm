@@ -8,8 +8,9 @@ use wm_platform::{NativeWindow, RectDelta};
 use crate::{
   commands::{
     container::{
-      attach_container, plan_tiling_insertion, refresh_tiling_minimums,
-      refresh_window_minimum, set_focused_descendant,
+      attach_container, attach_tiling_window_with_minimums,
+      refresh_tiling_minimums, refresh_window_minimum,
+      set_focused_descendant,
     },
     window::run_window_rules,
   },
@@ -17,9 +18,7 @@ use crate::{
     Container, Monitor, NativeWindowProperties, NonTilingWindow,
     TilingWindow, WindowContainer,
   },
-  traits::{
-    CommonGetters, PositionGetters, TilingSizeGetters, WindowGetters,
-  },
+  traits::{CommonGetters, PositionGetters, WindowGetters},
   user_config::UserConfig,
   wm_state::WmState,
 };
@@ -288,29 +287,32 @@ fn attach_new_window(
 ) -> anyhow::Result<WindowContainer> {
   let mut insertion_parent = target_parent.clone();
   let mut insertion_index = target_index;
-  let mut insertion_plan = None;
   if let WindowContainer::TilingWindow(window) = &window_container {
     refresh_window_minimum(&window_container)?;
     refresh_tiling_minimums(target_parent)?;
-    insertion_plan = plan_tiling_insertion(window, target_parent)?;
-    if insertion_plan.is_none() {
-      // Do not make existing tiles smaller than their applications allow.
-      // Keep the new app usable as a floating window if no safe split
-      // fits.
-      window_container = window
-        .to_non_tiling(
-          WindowState::Floating(
-            config.value.window_behavior.state_defaults.floating.clone(),
-          ),
-          None,
-        )
-        .into();
-      insertion_parent = target_parent
-        .workspace()
-        .context("No target workspace.")?
-        .into();
-      insertion_index = insertion_parent.child_count();
+    if attach_tiling_window_with_minimums(
+      window,
+      target_parent,
+      target_index,
+      &config.value.gaps,
+    )? {
+      return Ok(window_container);
     }
+    // Do not make existing tiles smaller than their applications allow.
+    // Keep the new app usable as a floating window if no safe split fits.
+    window_container = window
+      .to_non_tiling(
+        WindowState::Floating(
+          config.value.window_behavior.state_defaults.floating.clone(),
+        ),
+        None,
+      )
+      .into();
+    insertion_parent = target_parent
+      .workspace()
+      .context("No target workspace.")?
+      .into();
+    insertion_index = insertion_parent.child_count();
   }
 
   attach_container(
@@ -318,12 +320,6 @@ fn attach_new_window(
     &insertion_parent,
     Some(insertion_index),
   )?;
-  if let Some(plan) = insertion_plan {
-    for (child, size) in plan {
-      child.set_tiling_size(size);
-    }
-  }
-
   Ok(window_container)
 }
 
