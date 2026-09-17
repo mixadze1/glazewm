@@ -1571,6 +1571,11 @@ impl AnimationManager {
         );
         if let Some((monitor, direction)) = workspace_flight {
           animation.set_workspace_flight(monitor.clone(), direction);
+          if config.value.animations.window_open.enabled {
+            let open = &config.value.animations.window_open;
+            animation
+              .set_workspace_reveal(open.duration_ms, open.easing.clone());
+          }
           #[cfg(target_os = "windows")]
           self.slide_in_monitor_rects.insert(window_id, monitor);
         }
@@ -1648,6 +1653,7 @@ impl AnimationManager {
     // Re-fetch the animation after potentially starting a new one.
     if let Some(animation) = self.get_animation(&window_id) {
       let (current_rect, opacity) = animation.current_state_at(now);
+      let workspace_reveal = animation.workspace_reveal_progress_at(now);
 
       // Drive the surrogate overlay when one is active. `has_surrogate()`
       // requires a valid DWM thumbnail — if thumbnail registration failed
@@ -1676,7 +1682,9 @@ impl AnimationManager {
             .as_ref()
             .map(|o| o.to_alpha())
             .unwrap_or(effect_opacity);
-          if zoom {
+          if let Some(progress) = workspace_reveal {
+            session.update_workspace_reveal(progress, opacity_u8);
+          } else if zoom {
             // Extract progress with a separate borrow before mutably using
             // session.
             let progress = self

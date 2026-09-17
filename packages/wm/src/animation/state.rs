@@ -44,6 +44,7 @@ pub struct WindowAnimationState {
   /// revealed at target_rect only after the thumbnail has left the
   /// screen.
   workspace_flight: Option<(Rect, i32)>,
+  workspace_reveal: Option<(Duration, EasingFunction)>,
 
   // Opacity animation; `None` when fade is disabled.
   pub start_opacity: Option<OpacityValue>,
@@ -66,6 +67,7 @@ impl WindowAnimationState {
       start_rect,
       target_rect,
       workspace_flight: None,
+      workspace_reveal: None,
       start_opacity: None,
       target_opacity: None,
     }
@@ -76,6 +78,40 @@ impl WindowAnimationState {
     if direction != 0 {
       self.workspace_flight = Some((monitor, direction.signum()));
     }
+  }
+
+  pub fn set_workspace_reveal(
+    &mut self,
+    duration_ms: u32,
+    easing: EasingFunction,
+  ) {
+    if self.workspace_flight.is_some() && duration_ms > 0 {
+      let duration = Duration::from_millis(u64::from(duration_ms));
+      self.duration += duration;
+      self.workspace_reveal = Some((duration, easing));
+    }
+  }
+
+  fn reveal_split(&self) -> Option<f32> {
+    let (duration, _) = self.workspace_reveal.as_ref()?;
+    Some(
+      (self.duration - *duration).as_secs_f32()
+        / self.duration.as_secs_f32(),
+    )
+  }
+
+  pub fn workspace_reveal_progress_at(&self, now: Instant) -> Option<f32> {
+    let split = self.reveal_split()?;
+    let progress = self.eased_progress_at(now);
+    let (reveal_duration, _) = self.workspace_reveal.as_ref()?;
+    let elapsed = now
+      .saturating_duration_since(self.start_time.get()?)
+      .saturating_sub(self.start_delay);
+    if elapsed < self.duration - *reveal_duration {
+      return None;
+    }
+    (progress >= split)
+      .then(|| ((progress - split) / (1.0 - split)).clamp(0.0, 1.0))
   }
 
   fn flight_exit_rect(&self) -> Option<Rect> {
@@ -94,6 +130,24 @@ impl WindowAnimationState {
   }
 
   fn rect_at_progress(&self, progress: f32) -> Rect {
+    if let Some(split) = self.reveal_split() {
+      if progress >= split {
+        let scale = ((progress - split) / (1.0 - split)).clamp(0.0, 1.0);
+        let width =
+          (self.target_rect.width() as f32 * scale).round() as i32;
+        let height =
+          (self.target_rect.height() as f32 * scale).round() as i32;
+        return Rect::from_xy(
+          self.target_rect.x() + (self.target_rect.width() - width) / 2,
+          self.target_rect.y() + (self.target_rect.height() - height) / 2,
+          width,
+          height,
+        );
+      }
+      return self
+        .start_rect
+        .interpolate(&self.flight_exit_rect().unwrap(), progress / split);
+    }
     if let Some(exit) = self.flight_exit_rect() {
       self.start_rect.interpolate(&exit, progress.clamp(0.0, 1.0))
     } else {
@@ -140,6 +194,17 @@ impl WindowAnimationState {
     // is safe even if `now` precedes it on the first delayed tick.
     let effective_start = start + self.start_delay;
     let raw = animation_progress_at(effective_start, self.duration, now);
+    if let Some((_, reveal_easing)) = &self.workspace_reveal {
+      let split = self.reveal_split().unwrap();
+      return if raw < split {
+        split * apply_easing(raw / split, &self.easing).clamp(0.0, 1.0)
+      } else {
+        split
+          + (1.0 - split)
+            * apply_easing((raw - split) / (1.0 - split), reveal_easing)
+              .clamp(0.0, 1.0)
+      };
+    }
     let eased = apply_easing(raw, &self.easing);
     let done = if self.easing.can_overshoot() {
       raw == 1.0
@@ -258,6 +323,75 @@ mod tests {
   use wm_platform::Rect;
 
   use super::*;
+
+  #[test]
+  fn workspace_reveal_starts_only_after_exit_and_finishes_at_target() {
+    let start = Rect::from_xy(100, 100, 640, 480);
+    let target = Rect::from_xy(900, 200, 800, 600);
+    let mut animation = WindowAnimationState::new_movement(
+      start.clone(),
+      target.clone(),
+      450,
+      linear(),
+    );
+    animation.set_workspace_flight(Rect::from_xy(0, 0, 1920, 1080), -1);
+    animation.set_workspace_reveal(250, linear());
+    let now = Instant::now();
+    assert_eq!(animation.current_state_at(now).0, start);
+    assert!(animation
+      .workspace_reveal_progress_at(now + Duration::from_millis(225))
+      .is_none());
+    assert!(
+      animation
+        .current_state_at(now + Duration::from_millis(225))
+        .0
+        .x()
+        < start.x()
+    );
+    let boundary = now + Duration::from_millis(450);
+    assert!(
+      animation.workspace_reveal_progress_at(boundary).unwrap() < 0.0001
+    );
+    assert_eq!(animation.current_state_at(boundary).0.width(), 0);
+    let halfway = animation
+      .current_state_at(now + Duration::from_millis(575))
+      .0;
+    assert!((halfway.width() - 400).abs() <= 1);
+    assert!((halfway.height() - 300).abs() <= 1);
+    assert!(
+      (halfway.x() + halfway.width() / 2
+        - (target.x() + target.width() / 2))
+        .abs()
+        <= 1
+    );
+    assert_eq!(
+      animation
+        .current_state_at(now + Duration::from_millis(700))
+        .0,
+      target
+    );
+  }
+
+  #[test]
+  fn zero_exit_duration_can_reveal_without_division_by_zero() {
+    let rect = Rect::from_xy(100, 100, 640, 480);
+    let mut animation = WindowAnimationState::new_movement(
+      rect.clone(),
+      rect.clone(),
+      0,
+      linear(),
+    );
+    animation.set_workspace_flight(Rect::from_xy(0, 0, 1920, 1080), 1);
+    animation.set_workspace_reveal(250, linear());
+    let now = Instant::now();
+    assert_eq!(animation.workspace_reveal_progress_at(now), Some(0.0));
+    assert_eq!(
+      animation
+        .current_state_at(now + Duration::from_millis(250))
+        .0,
+      rect
+    );
+  }
 
   #[test]
   fn workspace_flights_only_exit_without_reentering() {

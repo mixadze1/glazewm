@@ -351,6 +351,52 @@ impl ResizeSession {
     surrogate.set_window_opacity(opacity);
   }
 
+  /// Reveal a carried window at its destination after its exit completes.
+  /// Keep the real window cloaked until the ordinary final handoff.
+  pub fn update_workspace_reveal(&mut self, progress: f32, opacity: u8) {
+    self.maybe_handoff();
+    self.sync_registration();
+    let target = to_logical(&self.target_rect, &self.border_inset);
+    if let Some(surrogate) = &mut self.surrogate {
+      let scale = progress.clamp(0.0, 1.0);
+      let width = (target.width() as f32 * scale).round() as i32;
+      let height = (target.height() as f32 * scale).round() as i32;
+      if width <= 0 || height <= 0 {
+        surrogate.set_visible(false);
+        return;
+      }
+      let rect = Rect::from_xy(
+        target.x() + (target.width() - width) / 2,
+        target.y() + (target.height() - height) / 2,
+        width,
+        height,
+      );
+      // Scale all captured content. Moving the overlay's bounds as well
+      // keeps its solid backdrop inside the reveal instead of flashing a
+      // full-size rectangle around a small thumbnail.
+      let (source_width, source_height) = surrogate.content_size();
+      surrogate.set_thumbnail_rects(
+        RECT {
+          left: 0,
+          top: 0,
+          right: source_width,
+          bottom: source_height,
+        },
+        RECT {
+          left: 0,
+          top: 0,
+          right: width,
+          bottom: height,
+        },
+      );
+      if let Err(err) = surrogate.reposition(&rect) {
+        tracing::warn!("Workspace reveal reposition failed: {err}.");
+      }
+      surrogate.set_window_opacity(opacity);
+      surrogate.set_visible(true);
+    }
+  }
+
   /// Hands the real (cloaked) window off to its final target rect
   /// mid-animation.
   ///
