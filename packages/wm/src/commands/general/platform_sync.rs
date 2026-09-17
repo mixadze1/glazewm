@@ -417,7 +417,7 @@ fn redraw_containers(
           .unique_by(|window| window.id())
         {
           let id = window.id();
-          if state.pending_sync.workspace_transfers.contains(&id) {
+          if state.pending_sync.workspace_transfers.contains_key(&id) {
             continue;
           }
           let is_incoming =
@@ -707,7 +707,7 @@ fn redraw_containers(
     let is_workspace_transfer = state
       .pending_sync
       .workspace_transfers
-      .contains(&window.id());
+      .contains_key(&window.id());
     let previous_target =
       state.window_target_positions.get(&window.id()).cloned();
     #[cfg(target_os = "windows")]
@@ -905,6 +905,17 @@ fn redraw_containers(
           cycle_has_resize,
           target_rect.clone(),
           previous_target,
+          state
+            .pending_sync
+            .workspace_transfers
+            .get(&window.id())
+            .filter(|direction| {
+              **direction != 0
+                && config.value.animations.workspace_switch.enabled
+            })
+            .map(|direction| {
+              (monitor.native_properties().bounds.clone(), *direction)
+            }),
           &*native_ref,
           effect_opacity,
           corner_style,
@@ -918,6 +929,7 @@ fn redraw_containers(
         cycle_has_resize,
         target_rect.clone(),
         previous_target,
+        None,
         u8::MAX,
         config,
       )
@@ -1190,13 +1202,13 @@ fn redraw_containers(
   if state
     .pending_sync
     .workspace_transfers
-    .iter()
+    .keys()
     .any(|id| state.animation_manager.has_workspace_switch_window(id))
   {
     // The carried window's replacement overlay (or real window) must be
     // composited before releasing its old workspace thumbnail.
     wm_platform::dwm_flush();
-    for id in &state.pending_sync.workspace_transfers {
+    for id in state.pending_sync.workspace_transfers.keys() {
       state.animation_manager.remove_workspace_window(id);
     }
   }

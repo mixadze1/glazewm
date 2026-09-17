@@ -69,7 +69,7 @@ pub struct PendingSync {
   /// Windows reparented this cycle; their screen-space move is
   /// independent of the workspace camera when a subsequent command
   /// follows them.
-  pub(crate) workspace_transfers: HashSet<Uuid>,
+  pub(crate) workspace_transfers: HashMap<Uuid, i32>,
 
   /// Window IDs that just underwent a tiling/floating state change this
   /// sync cycle. Used by `platform_sync` to allow `window_move`

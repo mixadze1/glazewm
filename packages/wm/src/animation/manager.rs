@@ -1510,6 +1510,7 @@ impl AnimationManager {
     cycle_has_resize: bool,
     target_rect: Rect,
     previous_target: Option<Rect>,
+    workspace_flight: Option<(Rect, i32)>,
     // Only used on Windows to capture the window for the surrogate.
     #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
     native_window: &NativeWindow,
@@ -1525,13 +1526,14 @@ impl AnimationManager {
   ) -> (AnimationPositionResult, Option<OpacityValue>) {
     let existing_animation = self.get_animation(&window_id).cloned();
 
-    let should_start = self.should_start_new_animation(
-      &window_id,
-      is_resize,
-      &target_rect,
-      previous_target.as_ref(),
-      config,
-    );
+    let should_start = workspace_flight.is_some()
+      || self.should_start_new_animation(
+        &window_id,
+        is_resize,
+        &target_rect,
+        previous_target.as_ref(),
+        config,
+      );
 
     if should_start {
       if let Some(prev_target) = previous_target {
@@ -1550,7 +1552,10 @@ impl AnimationManager {
           || (cycle_has_resize
             && config.value.animations.window_resize.enabled);
 
-        let (duration_ms, easing) = if use_resize_timing {
+        let (duration_ms, easing) = if workspace_flight.is_some() {
+          let c = &config.value.animations.workspace_switch;
+          (c.duration_ms, c.easing.clone())
+        } else if use_resize_timing {
           let c = &config.value.animations.window_resize;
           (c.duration_ms, c.easing.clone())
         } else {
@@ -1558,12 +1563,17 @@ impl AnimationManager {
           (c.duration_ms, c.easing.clone())
         };
 
-        let animation = WindowAnimationState::new_movement(
+        let mut animation = WindowAnimationState::new_movement(
           start_rect.clone(),
           target_rect.clone(),
           duration_ms,
           easing,
         );
+        if let Some((monitor, direction)) = workspace_flight {
+          animation.set_workspace_flight(monitor.clone(), direction);
+          #[cfg(target_os = "windows")]
+          self.slide_in_monitor_rects.insert(window_id, monitor);
+        }
         self.start_animation(window_id, animation);
 
         // Redirect an in-flight surrogate session to the new target, or

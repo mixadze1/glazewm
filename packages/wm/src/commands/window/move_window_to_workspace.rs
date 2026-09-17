@@ -88,7 +88,25 @@ pub fn move_window_to_workspace(
       .find(|descendant| descendant.state() == WindowState::Tiling);
 
     // Insert the window into the target workspace.
-    state.pending_sync.workspace_transfers.insert(window.id());
+    let direction = if current_monitor.id() == target_monitor.id() {
+      match (
+        config.workspace_config_index(&current_workspace.config().name),
+        config.workspace_config_index(&target_workspace.config().name),
+      ) {
+        (Some(from), Some(to)) => match to.cmp(&from) {
+          std::cmp::Ordering::Less => -1,
+          std::cmp::Ordering::Greater => 1,
+          std::cmp::Ordering::Equal => 0,
+        },
+        _ => 0,
+      }
+    } else {
+      0
+    };
+    state
+      .pending_sync
+      .workspace_transfers
+      .insert(window.id(), direction);
     match (window.is_tiling_window(), insertion_sibling.is_some()) {
       (true, true) => {
         if let Some(insertion_sibling) = insertion_sibling {

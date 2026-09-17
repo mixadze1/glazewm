@@ -40,6 +40,9 @@ pub struct WindowAnimationState {
   // Position animation.
   pub start_rect: Rect,
   pub target_rect: Rect,
+  /// A directional exit and re-entry, clipped to this monitor. The jump
+  /// between edges happens only while the thumbnail is fully off-screen.
+  workspace_flight: Option<(Rect, i32)>,
 
   // Opacity animation; `None` when fade is disabled.
   pub start_opacity: Option<OpacityValue>,
@@ -61,9 +64,56 @@ impl WindowAnimationState {
       easing,
       start_rect,
       target_rect,
+      workspace_flight: None,
       start_opacity: None,
       target_opacity: None,
     }
+  }
+
+  /// Adds a directional flight across the monitor edges.
+  pub fn set_workspace_flight(&mut self, monitor: Rect, direction: i32) {
+    if direction != 0 {
+      self.workspace_flight = Some((monitor, direction.signum()));
+    }
+  }
+
+  // Returns the first edge, opposite entry edge, and leg distances.
+  fn flight_legs(&self) -> Option<(f32, f32, f32, f32)> {
+    let (monitor, direction) = self.workspace_flight.as_ref()?;
+    let left = (monitor.x()
+      - self.start_rect.width().max(self.target_rect.width()))
+      as f32;
+    let right = (monitor.x() + monitor.width()) as f32;
+    let (exit, entry) = if *direction < 0 {
+      (left, right)
+    } else {
+      (right, left)
+    };
+    Some((
+      exit,
+      entry,
+      (exit - self.start_rect.x() as f32).abs(),
+      (self.target_rect.x() as f32 - entry).abs(),
+    ))
+  }
+
+  fn rect_at_progress(&self, progress: f32) -> Rect {
+    let rect = self.start_rect.interpolate(&self.target_rect, progress);
+    let Some((exit, entry, first, second)) = self.flight_legs() else {
+      return rect;
+    };
+    let travelled = progress.clamp(0.0, 1.0) * (first + second);
+    let x = if travelled < first && first > 0.0 {
+      self.start_rect.x() as f32
+        + (exit - self.start_rect.x() as f32) * travelled / first
+    } else if second > 0.0 {
+      entry
+        + (self.target_rect.x() as f32 - entry) * (travelled - first)
+          / second
+    } else {
+      self.target_rect.x() as f32
+    };
+    Rect::from_xy(x.round() as i32, rect.y(), rect.width(), rect.height())
   }
 
   /// Sets the delay before this animation starts and returns `self`.
@@ -164,6 +214,9 @@ impl WindowAnimationState {
   /// animation. Returns `0` for opacity-only animations whose start and
   /// target rects are identical.
   fn max_travel_px(&self) -> f32 {
+    if let Some((_, _, first, second)) = self.flight_legs() {
+      return first + second;
+    }
     let dx = (self.target_rect.x() - self.start_rect.x()).abs();
     let dy = (self.target_rect.y() - self.start_rect.y()).abs();
     let dw = (self.target_rect.width() - self.start_rect.width()).abs();
@@ -181,9 +234,7 @@ impl WindowAnimationState {
 
   /// Gets the interpolated rect at the current animation progress.
   pub fn current_rect(&self) -> Rect {
-    self
-      .start_rect
-      .interpolate(&self.target_rect, self.eased_progress())
+    self.rect_at_progress(self.eased_progress())
   }
 
   /// Gets the interpolated rect and opacity in a single call.
@@ -208,7 +259,7 @@ impl WindowAnimationState {
     now: Instant,
   ) -> (Rect, Option<OpacityValue>) {
     let progress = self.eased_progress_at(now);
-    let rect = self.start_rect.interpolate(&self.target_rect, progress);
+    let rect = self.rect_at_progress(progress);
     let opacity = match (&self.start_opacity, &self.target_opacity) {
       (Some(start), Some(end)) => Some(start.interpolate(end, progress)),
       _ => None,
@@ -222,6 +273,65 @@ mod tests {
   use wm_platform::Rect;
 
   use super::*;
+
+  #[test]
+  fn workspace_flights_move_in_requested_direction_on_both_legs() {
+    for monitor_x in [-1920, 0, 1920] {
+      let monitor = Rect::from_xy(monitor_x, 0, 1920, 1080);
+      let start = Rect::from_xy(monitor_x + 100, 100, 640, 480);
+      let target = Rect::from_xy(monitor_x + 900, 200, 800, 600);
+      for direction in [-1, 1] {
+        let mut animation = WindowAnimationState::new_movement(
+          start.clone(),
+          target.clone(),
+          450,
+          EasingFunction::default(),
+        );
+        animation.set_workspace_flight(monitor.clone(), direction);
+        assert_eq!(animation.rect_at_progress(0.0), start);
+        assert_eq!(animation.rect_at_progress(1.0), target);
+        let (_, _, first, second) = animation.flight_legs().unwrap();
+        let split = first / (first + second);
+        let midway_out = animation.rect_at_progress(split / 2.0);
+        let midway_in = animation.rect_at_progress((split + 1.0) / 2.0);
+        assert!((midway_out.x() - start.x()) * direction > 0);
+        assert!((target.x() - midway_in.x()) * direction > 0);
+        let before = animation.rect_at_progress(split - 0.00001);
+        let after = animation.rect_at_progress(split + 0.00001);
+        for rect in [before, after] {
+          let visible_width = (rect.right.min(monitor.right)
+            - rect.left.max(monitor.left))
+          .max(0);
+          assert!(
+            visible_width <= 1,
+            "edge swap must be outside the visible monitor"
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn same_layout_still_flies_instead_of_completing_immediately() {
+    let rect = Rect::from_xy(100, 100, 640, 480);
+    let mut animation = WindowAnimationState::new_movement(
+      rect.clone(),
+      rect.clone(),
+      450,
+      EasingFunction::default(),
+    );
+    animation.set_workspace_flight(Rect::from_xy(0, 0, 1920, 1080), -1);
+    let now = Instant::now();
+    assert_eq!(animation.eased_progress_at(now), 0.0);
+    assert!(animation.max_travel_px() > 1920.0);
+    assert_ne!(animation.rect_at_progress(0.25), rect);
+    assert_eq!(
+      animation
+        .current_state_at(now + Duration::from_millis(450))
+        .0,
+      rect
+    );
+  }
 
   /// A cubic bezier with collinear, evenly-spaced control points is
   /// exactly the identity curve, so `eased == raw`. Used to make
