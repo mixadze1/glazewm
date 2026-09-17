@@ -579,6 +579,7 @@ impl WindowManager {
             args.width.clone(),
             args.height.clone(),
             state,
+            &config.value.window_behavior,
           ),
           _ => Ok(()),
         }
@@ -616,6 +617,7 @@ impl WindowManager {
                 width.clone(),
                 height.clone(),
                 state,
+                &config.value.window_behavior,
               )?;
             }
 
@@ -736,6 +738,7 @@ impl WindowManager {
             args.width.clone(),
             args.height.clone(),
             state,
+            &config.value.window_behavior,
           ),
           _ => Ok(()),
         }

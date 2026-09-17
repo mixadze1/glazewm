@@ -1,3 +1,4 @@
+use wm_common::WindowBehaviorConfig;
 use wm_platform::LengthValue;
 
 use super::set_window_size;
@@ -13,6 +14,7 @@ pub fn resize_window(
   width_delta: Option<LengthValue>,
   height_delta: Option<LengthValue>,
   state: &mut WmState,
+  behavior: &WindowBehaviorConfig,
 ) -> anyhow::Result<()> {
   let window_rect = window.to_rect()?;
 
@@ -61,6 +63,7 @@ pub fn resize_window(
     target_width.map(LengthValue::from_px),
     target_height.map(LengthValue::from_px),
     state,
+    behavior,
   )?;
 
   Ok(())

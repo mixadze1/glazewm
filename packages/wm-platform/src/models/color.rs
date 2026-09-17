@@ -14,9 +14,9 @@ impl Color {
   #[must_use]
   #[allow(clippy::missing_panics_doc)]
   pub fn to_bgr(&self) -> u32 {
-    let bgr = format!("{:02x}{:02x}{:02x}", self.b, self.g, self.r);
-    // SAFETY: An invalid hex value is unrepresentable.
-    u32::from_str_radix(&bgr, 16).unwrap()
+    u32::from(self.r)
+      | (u32::from(self.g) << 8)
+      | (u32::from(self.b) << 16)
   }
 }
 
@@ -24,6 +24,10 @@ impl FromStr for Color {
   type Err = crate::ParseError;
 
   fn from_str(unparsed: &str) -> Result<Self, crate::ParseError> {
+    // Validate before slicing: malformed config must not panic.
+    if !matches!(unparsed.len(), 7 | 9) || !unparsed.is_ascii() {
+      return Err(crate::ParseError::Color(unparsed.to_string()));
+    }
     let mut chars = unparsed.chars();
 
     if chars.next() != Some('#') {
@@ -68,5 +72,27 @@ impl<'de> Deserialize<'de> for Color {
         Self::from_str(&str).map_err(serde::de::Error::custom)
       }
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn invalid_colors_return_errors_without_panicking() {
+    for value in
+      ["", "#", "#12", "#1234567", "#zz0000", "#é12345", "1234567"]
+    {
+      assert!(Color::from_str(value).is_err(), "{value}");
+    }
+  }
+
+  #[test]
+  fn hex_color_preserves_channels_and_alpha() {
+    let color = Color::from_str("#12345678").unwrap();
+    assert_eq!(color.to_bgr(), 0x0056_3412);
+    assert_eq!(color.a, 0x78);
+    assert_eq!(Color::from_str("#123456").unwrap().a, 255);
   }
 }

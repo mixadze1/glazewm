@@ -7,12 +7,14 @@ pub fn toggle_pause(state: &mut WmState) {
   #[cfg(target_os = "windows")]
   {
     state.resize_cursor_clip = None;
+    state.focus_outline = None;
   }
   let is_paused = !state.is_paused;
   state.is_paused = is_paused;
 
   // Redraw full container tree on unpause.
   if !is_paused {
+    state.pending_sync.queue_all_effects_update();
     state
       .pending_sync
       .queue_container_to_redraw(state.root_container.clone());

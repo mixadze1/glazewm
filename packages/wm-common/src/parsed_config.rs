@@ -167,6 +167,10 @@ pub struct KeybindingConfig {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, rename_all(serialize = "camelCase"))]
 pub struct WindowBehaviorConfig {
+  /// Whether keyboard/IPC resize commands respect application minimums.
+  /// Mouse resizing continues to respect them independently.
+  pub resize_respects_minimum_size: bool,
+
   /// New windows are created in this state whenever possible.
   pub initial_state: InitialWindowState,
 
@@ -232,6 +236,10 @@ impl Default for FullscreenStateConfig {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, rename_all(serialize = "camelCase"))]
 pub struct WindowEffectsConfig {
+  /// Focus outline width in physical pixels on Windows. Values above 1
+  /// add a click-through outline; 0/1 keep the native border only.
+  pub focused_border_width: u16,
+
   /// Visual effects to apply to the focused window.
   pub focused_window: WindowEffectConfig,
 

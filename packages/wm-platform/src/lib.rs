@@ -7,10 +7,14 @@ mod display;
 mod display_listener;
 mod error;
 mod event_loop;
+#[cfg(target_os = "windows")]
+mod focus_outline;
 mod keybinding_listener;
 mod models;
 mod mouse_listener;
 mod native_window;
+#[cfg(target_os = "windows")]
+pub use focus_outline::FocusOutline;
 #[cfg(target_os = "windows")]
 mod resize_cursor_clip;
 #[cfg(target_os = "windows")]

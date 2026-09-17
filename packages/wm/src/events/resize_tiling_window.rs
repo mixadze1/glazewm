@@ -8,11 +8,13 @@ use wm_common::{ResizeEdges, TilingDirection};
 use wm_platform::Rect;
 
 use crate::{
-  commands::container::{minimum_length, refresh_tiling_minimums},
+  commands::container::{
+    apply_resize_shares, refresh_tiling_minimums, resize_constraints,
+  },
   models::{TilingContainer, TilingWindow},
   traits::{
     CommonGetters, PositionGetters, TilingDirectionGetters,
-    TilingSizeGetters, WindowGetters, MIN_TILING_SIZE,
+    TilingSizeGetters, WindowGetters,
   },
   wm_state::WmState,
 };
@@ -128,29 +130,16 @@ fn resize_edge(
           return Ok(None);
         }
         let size = container.tiling_size();
-        let capacity: f32 = capacities.iter().sum();
         let change =
           (if leading { -delta } else { delta }) as f32 / available;
-        let change = change.clamp(minimum - size, capacity);
-        if change == 0. {
+        if !apply_resize_shares(
+          &container,
+          neighbors,
+          size + change,
+          minimum,
+          &capacities,
+        ) {
           return Ok(None);
-        }
-        let neighbor_total: f32 =
-          neighbors.iter().map(TilingSizeGetters::tiling_size).sum();
-        container.set_tiling_size(size + change);
-        for (neighbor, capacity_for_neighbor) in
-          neighbors.iter().zip(capacities)
-        {
-          // Shrinking distributes only available space. Growing still
-          // works when every neighbor is at its minimum (no
-          // division by zero).
-          let weight = if change > 0. {
-            capacity_for_neighbor / capacity
-          } else {
-            neighbor.tiling_size() / neighbor_total
-          };
-          neighbor
-            .set_tiling_size(neighbor.tiling_size() - change * weight);
         }
         return Ok(Some(parent));
       }
@@ -163,30 +152,6 @@ fn resize_edge(
     container = ancestor;
   }
   Ok(None)
-}
-
-fn resize_constraints(
-  container: &TilingContainer,
-  neighbors: &[TilingContainer],
-  horizontal: bool,
-) -> anyhow::Result<(f32, f32, Vec<f32>)> {
-  let parent = container.parent().context("No parent.")?;
-  let (gap_x, gap_y) = container.inner_gaps()?;
-  let gap = if horizontal { gap_x } else { gap_y };
-  let available = length(&parent.to_rect()?, horizontal)
-    - gap as f32 * container.tiling_siblings().count() as f32;
-  let minimum = |child: &TilingContainer| -> anyhow::Result<f32> {
-    Ok(
-      ((minimum_length(child, horizontal)? + 1.) / available.max(1.))
-        .max(MIN_TILING_SIZE)
-        .min(child.tiling_size()),
-    )
-  };
-  let capacities = neighbors
-    .iter()
-    .map(|neighbor| Ok(neighbor.tiling_size() - minimum(neighbor)?))
-    .collect::<anyhow::Result<Vec<_>>>()?;
-  Ok((available, minimum(container)?, capacities))
 }
 
 /// Legal displacement of a dragged edge, in layout pixels.
@@ -316,6 +281,7 @@ fn constrain_resize_cursor(
   Ok(())
 }
 
+#[cfg(test)]
 fn length(rect: &Rect, horizontal: bool) -> f32 {
   (if horizontal {
     rect.width()

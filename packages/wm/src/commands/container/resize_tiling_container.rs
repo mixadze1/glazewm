@@ -7,6 +7,9 @@ pub fn resize_tiling_container(
   container_to_resize: &TilingContainer,
   target_size: f32,
 ) {
+  if !target_size.is_finite() {
+    return;
+  }
   let tiling_siblings =
     container_to_resize.tiling_siblings().collect::<Vec<_>>();
 
@@ -38,11 +41,39 @@ pub fn resize_tiling_container(
     // Get percentage of resize that affects this container. Siblings are
     // resized in proportion to their current size (i.e. larger containers
     // are shrunk more).
-    let resize_factor =
-      (sibling.tiling_size() - MIN_TILING_SIZE) / available_size;
+    // When every sibling is at its minimum, shrinking the target must
+    // still work rather than writing NaN proportions into the tree.
+    #[allow(clippy::cast_precision_loss)]
+    let resize_factor = if available_size > f32::EPSILON {
+      (sibling.tiling_size() - MIN_TILING_SIZE) / available_size
+    } else {
+      1. / tiling_siblings.len() as f32
+    };
 
     let size_delta = resize_factor * size_delta;
 
     sibling.set_tiling_size(sibling.tiling_size() - size_delta);
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::models::{TilingWindow, Workspace};
+
+  #[test]
+  fn shrinking_with_minimum_siblings_keeps_finite_normalized_shares() {
+    let a = TilingWindow::mock().call();
+    let b = TilingWindow::mock().call();
+    let _workspace = Workspace::mock()
+      .tiling_containers(vec![a.clone().into(), b.clone().into()])
+      .call();
+    a.set_tiling_size(1. - MIN_TILING_SIZE);
+    b.set_tiling_size(MIN_TILING_SIZE);
+    resize_tiling_container(&a.clone().into(), 0.5);
+    assert!((a.tiling_size() - 0.5).abs() < f32::EPSILON);
+    assert!((b.tiling_size() - 0.5).abs() < f32::EPSILON);
+    resize_tiling_container(&a.clone().into(), f32::NAN);
+    assert!(a.tiling_size().is_finite());
   }
 }

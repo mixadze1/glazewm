@@ -59,6 +59,9 @@ pub struct WmState {
   /// effects from the previous window rather than all windows when focus
   /// changes.
   pub prev_effects_window: Option<WindowContainer>,
+  #[cfg(target_os = "windows")]
+  pub focus_outline:
+    Option<wm_platform::ThreadBound<wm_platform::FocusOutline>>,
 
   /// Time since a previously focused window was unmanaged or minimized.
   ///
@@ -104,6 +107,8 @@ impl WmState {
       #[cfg(target_os = "windows")]
       resize_cursor_clip: None,
       prev_effects_window: None,
+      #[cfg(target_os = "windows")]
+      focus_outline: None,
       recent_workspace_name: None,
       unmanaged_or_minimized_timestamp: None,
       binding_modes: Vec::new(),

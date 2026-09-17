@@ -157,6 +157,8 @@ gaps:
     left: "20px"
 
 window_effects:
+  # Windows focus outline, in physical pixels (1 = native thin border).
+  focused_border_width: 3
   # Visual effects to apply to the focused window.
   focused_window:
     # Highlight the window with a colored border.
@@ -199,6 +201,8 @@ window_effects:
       opacity: "0%"
 
 window_behavior:
+  # Keyboard/IPC resize (including Alt+R) may go below app minimums.
+  resize_respects_minimum_size: false
   # New windows are created in this state whenever possible.
   # Allowed values: 'tiling', 'floating'.
   initial_state: "tiling"

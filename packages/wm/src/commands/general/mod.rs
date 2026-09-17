@@ -13,3 +13,5 @@ pub use platform_sync::*;
 pub use reload_config::*;
 pub use shell_exec::*;
 pub use toggle_pause::*;
+#[cfg(target_os = "windows")]
+mod focus_outline;

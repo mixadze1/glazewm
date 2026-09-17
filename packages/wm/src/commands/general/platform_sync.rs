@@ -15,6 +15,8 @@ use wm_platform::{
 use wm_platform::{Rect, WindowZOrder};
 
 #[cfg(target_os = "windows")]
+use super::focus_outline::sync_focus_outline;
+#[cfg(target_os = "windows")]
 use crate::pending_sync::IrisSwitchRequest;
 use crate::{
   animation::AnimationPositionResult,
@@ -83,6 +85,8 @@ pub fn platform_sync(
     // Keep reference to the previous window that had focus effects
     // applied.
     let prev_effects_window = state.prev_effects_window.clone();
+    #[cfg(target_os = "windows")]
+    sync_focus_outline(&focused_container, state, config);
 
     if let Ok(window) = focused_container.as_window_container() {
       apply_window_effects(&window, true, config);

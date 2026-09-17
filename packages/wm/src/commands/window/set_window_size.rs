@@ -1,11 +1,11 @@
 use anyhow::Context;
-use wm_common::WindowState;
+use wm_common::{WindowBehaviorConfig, WindowState};
 use wm_platform::{LengthValue, Rect};
 
 use crate::{
   commands::container::{
     available_tiling_length, refresh_tiling_minimums,
-    refresh_window_minimum, resize_with_minimums,
+    refresh_window_minimum, resize_tiling_container, resize_with_minimums,
   },
   models::{NonTilingWindow, TilingWindow, WindowContainer},
   traits::{
@@ -14,19 +14,22 @@ use crate::{
   wm_state::WmState,
 };
 
-/// Arbitrary defaults for minimum floating window dimensions.
-const MIN_FLOATING_WIDTH: i32 = 250;
-const MIN_FLOATING_HEIGHT: i32 = 140;
-
 pub fn set_window_size(
   window: WindowContainer,
   target_width: Option<LengthValue>,
   target_height: Option<LengthValue>,
   state: &mut WmState,
+  behavior: &WindowBehaviorConfig,
 ) -> anyhow::Result<()> {
   match window {
     WindowContainer::TilingWindow(window) => {
-      set_tiling_window_size(&window, target_width, target_height, state)?;
+      set_tiling_window_size(
+        &window,
+        target_width,
+        target_height,
+        state,
+        behavior,
+      )?;
     }
     WindowContainer::NonTilingWindow(window) => {
       if matches!(window.state(), WindowState::Floating(_)) {
@@ -35,6 +38,7 @@ pub fn set_window_size(
           target_width,
           target_height,
           state,
+          behavior,
         )?;
       }
     }
@@ -43,20 +47,101 @@ pub fn set_window_size(
   Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::models::{Monitor, Workspace};
+
+  #[test]
+  fn command_resize_policy_can_bypass_native_minimums() {
+    let a = TilingWindow::mock().call();
+    let b = TilingWindow::mock().call();
+    let workspace = Workspace::mock()
+      .tiling_containers(vec![a.clone().into(), b.clone().into()])
+      .call();
+    let _monitor = Monitor::mock().workspaces(vec![workspace]).call();
+    for window in [&a, &b] {
+      window.update_native_properties(|p| {
+        p.minimum_tiling_size = Some((500, 200))
+      });
+    }
+    let (event_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let (exit_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let (tick_tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let mut state = WmState::new(
+      wm_platform::Dispatcher::mock(),
+      event_tx,
+      exit_tx,
+      tick_tx,
+    );
+    let mut behavior = WindowBehaviorConfig {
+      resize_respects_minimum_size: true,
+      ..Default::default()
+    };
+    set_tiling_window_length(
+      &a,
+      &LengthValue::from_px(100),
+      true,
+      &mut state,
+      &behavior,
+    )
+    .unwrap();
+    assert!(a.to_rect().unwrap().width() >= 500);
+    behavior.resize_respects_minimum_size = false;
+    set_tiling_window_length(
+      &a,
+      &LengthValue::from_px(100),
+      true,
+      &mut state,
+      &behavior,
+    )
+    .unwrap();
+    assert!((a.to_rect().unwrap().width() - 100).abs() <= 1);
+  }
+
+  #[test]
+  fn sample_config_exposes_focus_width_and_unrestricted_command_resize() {
+    let config: wm_common::ParsedConfig = serde_yaml::from_str(
+      include_str!("../../../../../resources/assets/sample-config.yaml"),
+    )
+    .unwrap();
+    assert_eq!(config.window_effects.focused_border_width, 3);
+    assert!(!config.window_behavior.resize_respects_minimum_size);
+    let legacy: wm_common::ParsedConfig =
+      serde_yaml::from_str("{}").unwrap();
+    assert_eq!(legacy.window_effects.focused_border_width, 0);
+  }
+}
+
 fn set_tiling_window_size(
   window: &TilingWindow,
   target_width: Option<LengthValue>,
   target_height: Option<LengthValue>,
   state: &mut WmState,
+  behavior: &WindowBehaviorConfig,
 ) -> anyhow::Result<()> {
   let workspace = window.workspace().context("No workspace.")?;
-  refresh_tiling_minimums(&workspace.into())?;
+  if behavior.resize_respects_minimum_size {
+    refresh_tiling_minimums(&workspace.into())?;
+  }
   if let Some(target_width) = target_width {
-    set_tiling_window_length(window, &target_width, true, state)?;
+    set_tiling_window_length(
+      window,
+      &target_width,
+      true,
+      state,
+      behavior,
+    )?;
   }
 
   if let Some(target_height) = target_height {
-    set_tiling_window_length(window, &target_height, false, state)?;
+    set_tiling_window_length(
+      window,
+      &target_height,
+      false,
+      state,
+      behavior,
+    )?;
   }
 
   Ok(())
@@ -68,6 +153,7 @@ fn set_tiling_window_length(
   target_length: &LengthValue,
   is_width_resize: bool,
   state: &mut WmState,
+  behavior: &WindowBehaviorConfig,
 ) -> anyhow::Result<()> {
   // When resizing a tiling window, the container to resize can actually be
   // an ancestor split container.
@@ -85,7 +171,13 @@ fn set_tiling_window_length(
     let tiling_size = target_length.to_percentage(parent_length);
 
     // Skip the resize if the window is already at the target size.
-    if resize_with_minimums(&container_to_resize, tiling_size)? {
+    let changed = if behavior.resize_respects_minimum_size {
+      resize_with_minimums(&container_to_resize, tiling_size)?
+    } else {
+      resize_tiling_container(&container_to_resize, tiling_size);
+      true
+    };
+    if changed {
       state
         .pending_sync
         .queue_containers_to_redraw(parent.tiling_children());
@@ -100,15 +192,23 @@ fn set_floating_window_size(
   target_width: Option<LengthValue>,
   target_height: Option<LengthValue>,
   state: &mut WmState,
+  behavior: &WindowBehaviorConfig,
 ) -> anyhow::Result<()> {
   let monitor = window.monitor().context("No monitor")?;
   let monitor_rect = monitor.to_rect()?;
   let window_rect = window.to_rect()?;
-  refresh_window_minimum(&window.clone().into())?;
-  let (minimum_width, minimum_height) = window
-    .native_properties()
-    .minimum_tiling_size
-    .unwrap_or((MIN_FLOATING_WIDTH, MIN_FLOATING_HEIGHT));
+  if behavior.resize_respects_minimum_size {
+    refresh_window_minimum(&window.clone().into())?;
+  }
+  let (minimum_width, minimum_height) =
+    if behavior.resize_respects_minimum_size {
+      window
+        .native_properties()
+        .minimum_tiling_size
+        .unwrap_or((1, 1))
+    } else {
+      (1, 1)
+    };
 
   // Prevent resize from making the window smaller than minimum dimensions.
   // Always allow the size to be increased, even if the window would still
@@ -127,11 +227,8 @@ fn set_floating_window_size(
   let target_width_px = target_width
     .map(|target_width| target_width.to_px(monitor_rect.width(), None));
 
-  let new_width = length_with_clamp(
-    target_width_px,
-    window_rect.width(),
-    minimum_width.max(MIN_FLOATING_WIDTH),
-  );
+  let new_width =
+    length_with_clamp(target_width_px, window_rect.width(), minimum_width);
 
   let target_height_px = target_height
     .map(|target_height| target_height.to_px(monitor_rect.height(), None));
@@ -139,7 +236,7 @@ fn set_floating_window_size(
   let new_height = length_with_clamp(
     target_height_px,
     window_rect.height(),
-    minimum_height.max(MIN_FLOATING_HEIGHT),
+    minimum_height,
   );
 
   window.set_floating_placement(Rect::from_xy(

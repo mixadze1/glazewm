@@ -135,28 +135,59 @@ pub fn resize_with_minimums(
     .as_direction_container()?;
   let horizontal =
     parent.tiling_direction() == TilingDirection::Horizontal;
-  let available = available_tiling_length(container, horizontal)? as f32;
   let siblings = container.tiling_siblings().collect::<Vec<_>>();
+  let (available, minimum, capacities) =
+    resize_constraints(container, &siblings, horizontal)?;
   if siblings.is_empty() || available <= 0. || !target.is_finite() {
     return Ok(false);
   }
+  Ok(apply_resize_shares(
+    container,
+    &siblings,
+    target,
+    minimum,
+    &capacities,
+  ))
+}
+
+/// Shared limits for mouse gestures and minimum-aware commands.
+pub fn resize_constraints(
+  container: &TilingContainer,
+  neighbors: &[TilingContainer],
+  horizontal: bool,
+) -> anyhow::Result<(f32, f32, Vec<f32>)> {
+  let available = available_tiling_length(container, horizontal)? as f32;
   let floor = |child: &TilingContainer| -> anyhow::Result<f32> {
     Ok(
-      ((minimum_length(child, horizontal)? + 1.) / available)
+      ((minimum_length(child, horizontal)? + 1.) / available.max(1.))
         .max(MIN_TILING_SIZE)
         .min(child.tiling_size()),
     )
   };
   let minimum = floor(container)?;
-  let capacities = siblings
+  let capacities = neighbors
     .iter()
     .map(|child| Ok(child.tiling_size() - floor(child)?))
     .collect::<anyhow::Result<Vec<_>>>()?;
+  Ok((available, minimum, capacities))
+}
+
+/// Redistribute only the selected neighbors while conserving total size.
+pub fn apply_resize_shares(
+  container: &TilingContainer,
+  siblings: &[TilingContainer],
+  target: f32,
+  minimum: f32,
+  capacities: &[f32],
+) -> bool {
+  if !target.is_finite() || siblings.is_empty() {
+    return false;
+  }
   let capacity: f32 = capacities.iter().sum();
   let size = container.tiling_size();
   let change = (target - size).clamp(minimum - size, capacity);
   if change.abs() < f32::EPSILON {
-    return Ok(false);
+    return false;
   }
   let sibling_total: f32 =
     siblings.iter().map(TilingSizeGetters::tiling_size).sum();
@@ -169,7 +200,7 @@ pub fn resize_with_minimums(
     child.set_tiling_size(child.tiling_size() - change * weight);
   }
   container.set_tiling_size(size + change);
-  Ok(true)
+  true
 }
 
 /// Plan before touching the tree, so an impossible insertion leaves the
