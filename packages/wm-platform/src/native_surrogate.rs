@@ -606,6 +606,19 @@ impl NativeSurrogate {
     )
     .unwrap_or(0);
 
+    // Own both resources before the fallible placement below. If the
+    // source/insert-after window disappears during setup, `?` must drop
+    // the thumbnail and HWND instead of leaking an orphaned overlay.
+    let surrogate = Self {
+      hwnd: hwnd.0,
+      thumbnail,
+      content_size: (logical_thumb.width(), logical_thumb.height()),
+      border_inset,
+      is_visible: initially_visible,
+      last_opacity: opacity,
+      last_rect: None,
+    };
+
     // Set the initial Z-order position and optionally show the surrogate.
     // `insert_after` is caller-controlled: resize/open surrogates pass
     // `HWND(0)` (HWND_TOP) so they appear above any co-active close
@@ -630,15 +643,7 @@ impl NativeSurrogate {
       )
     }?;
 
-    Ok(Self {
-      hwnd: hwnd.0,
-      thumbnail,
-      content_size: (logical_thumb.width(), logical_thumb.height()),
-      border_inset,
-      is_visible: initially_visible,
-      last_opacity: opacity,
-      last_rect: None,
-    })
+    Ok(surrogate)
   }
 
   /// Returns the raw handle of the surrogate overlay window.
@@ -941,5 +946,77 @@ impl Drop for NativeSurrogate {
       }
       let _ = DestroyWindow(HWND(self.hwnd));
     }
+  }
+}
+
+#[cfg(test)]
+mod lifetime_tests {
+  use windows::Win32::{
+    Foundation::{BOOL, LPARAM},
+    System::Threading::GetCurrentThreadId,
+    UI::WindowsAndMessaging::{EnumThreadWindows, IsWindow},
+  };
+
+  use super::*;
+
+  fn thread_window_count() -> usize {
+    unsafe extern "system" fn count(_: HWND, data: LPARAM) -> BOOL {
+      // SAFETY: EnumThreadWindows synchronously passes our live counter.
+      unsafe {
+        *(data.0 as *mut usize) += 1;
+      }
+      BOOL(1)
+    }
+    let mut total = 0usize;
+    unsafe {
+      let _ = EnumThreadWindows(
+        GetCurrentThreadId(),
+        Some(count),
+        LPARAM((&raw mut total) as isize),
+      );
+    }
+    total
+  }
+
+  fn overlay(
+    source: HWND,
+    insert_after: HWND,
+  ) -> crate::Result<NativeSurrogate> {
+    let rect = Rect::from_xy(0, 0, 100, 100);
+    NativeSurrogate::create(
+      source,
+      &rect,
+      &rect,
+      None,
+      255,
+      false,
+      RECT::default(),
+      &CornerStyle::Square,
+      insert_after,
+    )
+  }
+
+  #[test]
+  #[ignore = "Requires an interactive Windows compositor"]
+  fn repeated_overlay_lifetimes_release_windows() {
+    let source = overlay(HWND(0), HWND(0)).unwrap();
+    let baseline = thread_window_count();
+    for _ in 0..200 {
+      let surrogate = overlay(source.hwnd(), HWND(0)).unwrap();
+      assert!(surrogate.has_thumbnail());
+      let hwnd = surrogate.hwnd();
+      drop(surrogate);
+      assert!(!unsafe { IsWindow(hwnd).as_bool() });
+    }
+    assert_eq!(thread_window_count(), baseline);
+  }
+
+  #[test]
+  #[ignore = "Requires an interactive Windows compositor"]
+  fn failed_initial_placement_releases_allocated_windows() {
+    let source = overlay(HWND(0), HWND(0)).unwrap();
+    let baseline = thread_window_count();
+    assert!(overlay(source.hwnd(), HWND(-12345)).is_err());
+    assert_eq!(thread_window_count(), baseline);
   }
 }

@@ -1,6 +1,6 @@
 <div align="center">
 
-> Version 4.0.4 is available: [download the Windows x64 release](https://github.com/mixadze1/glazewm-feeling/releases/latest).
+> Version 4.0.5 is available: [download the Windows x64 release](https://github.com/mixadze1/glazewm-feeling/releases/latest).
 
   <br>
   <img src="./resources/assets/logo.svg" width="230" alt="GlazeWM logo" />
@@ -38,6 +38,8 @@ Built on [GlazeWM by glzr-io](https://github.com/glzr-io/glazewm), the keyboard-
 
 ### What's new in Feeling
 
+- Vertical moves can first stack a window with its neighbor, then place it across the full workspace width on the next press. Default move shortcuts remain `Alt + Shift + Up/Down`; `Alt + Up/Down` still changes focus.
+- Returning from a temporary stack preserves the original row proportions, including unequal widths. Repeated split/return cycles no longer enlarge neighbors, and horizontal moves past a vertical group stay horizontal.
 - Workspace and window motion is part of the interaction: transitions preserve continuity when you change direction or choose another destination mid-animation.
 - Focus outlines follow rounded window corners with antialiased edges and configurable thickness.
 - `Alt + R` enters resize mode with a configurable highlight color (yellow in the example config). Holding arrows or HJKL changes size in small frame-paced steps without queuing autorepeats; releasing the key stops generating resize steps. The configured resize step defaults to 2% and controls speed.
@@ -68,10 +70,11 @@ Version 4 is the Feeling line: a series of changes focused on the **feeling of u
 | [4.0.2 — Clear active state](https://github.com/mixadze1/glazewm-feeling/releases/tag/v4.0.2) | Added the Active tray checkmark, synchronized with the pause shortcut, so tiling can be toggled from either the keyboard or the tray. |
 | [4.0.3 — A desktop that adapts](https://github.com/mixadze1/glazewm-feeling/releases/tag/v4.0.3) | Added automatic safe areas for visible edge bars and the Windows taskbar. The layout adapts as panels appear, disappear, or change size, while preserving configured outer gaps. |
 | [4.0.4 — More direct control](https://github.com/mixadze1/glazewm-feeling/releases/tag/v4.0.4) | Added rounded, antialiased outlines and a separate resize-mode color; removed borders while paused; preserved the selected tiling direction; replaced queued resize autorepeats with held-key updates that keep the outline visible. The default resize step is 2%. |
+| [4.0.5 — Predictable tiling](https://github.com/mixadze1/glazewm-feeling/releases/tag/v4.0.5) | Added an intermediate vertical split; fixed repeated split/return sizing and horizontal moves around vertical groups; fixed resource cleanup after failed overlay placement. Animation appearance and timing remain unchanged. |
 
 ## Installation
 
-1. Download `glazewm-v4.0.4-windows-x64.zip` from the [Feeling releases](https://github.com/mixadze1/glazewm-feeling/releases/latest).
+1. Download `glazewm-v4.0.5-windows-x64.zip` from the [Feeling releases](https://github.com/mixadze1/glazewm-feeling/releases/latest).
 2. Extract the entire archive into one directory.
 3. Close any existing GlazeWM instance, then launch `glazewm.exe`.
 
@@ -84,7 +87,7 @@ Existing configuration is read from `%USERPROFILE%\.glzr\glazewm\config.yaml`. B
 Use the Rust toolchain specified by this repository and the Windows C++ build tools. From PowerShell:
 
 ```powershell
-$env:VERSION_NUMBER = '4.0.4'
+$env:VERSION_NUMBER = '4.0.5'
 cargo build --release -p wm -p wm-cli -p wm-watcher
 ```
 

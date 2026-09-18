@@ -4,7 +4,7 @@ param(
     [string]$Mode = 'Debug',
     [switch]$Test,
     [switch]$Install,
-    [string]$Version = '4.0.4'
+    [string]$Version = '4.0.5'
 )
 
 $ErrorActionPreference = 'Stop'

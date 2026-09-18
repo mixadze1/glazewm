@@ -13,7 +13,8 @@ use crate::{
     TilingContainer, TilingWindow, WindowContainer,
   },
   traits::{
-    CommonGetters, PositionGetters, TilingDirectionGetters, WindowGetters,
+    CommonGetters, PositionGetters, TilingDirectionGetters,
+    TilingSizeGetters, WindowGetters,
   },
   user_config::UserConfig,
   wm_state::WmState,
@@ -54,13 +55,16 @@ fn move_tiling_window(
   state: &mut WmState,
   config: &UserConfig,
 ) -> anyhow::Result<()> {
+  normalize_workspace_splits(&window_to_move)?;
   // Flatten the parent split container if it only contains the window.
-  if let Some(split_parent) = window_to_move
+  while let Some(split_parent) = window_to_move
     .parent()
     .and_then(|parent| parent.as_split().cloned())
   {
     if split_parent.child_count() == 1 {
       flatten_split_container(split_parent)?;
+    } else {
+      break;
     }
   }
 
@@ -83,6 +87,35 @@ fn move_tiling_window(
         state,
       );
     }
+  }
+
+  // At the edge of an intermediate column, escape to the workspace in
+  // one keypress rather than climbing each matching ancestor separately.
+  if matches!(direction, Direction::Up | Direction::Down)
+    && has_matching_tiling_direction
+    && !parent.is_workspace()
+  {
+    return move_to_vertical_workspace_edge(
+      window_to_move,
+      direction,
+      state,
+      config,
+    );
+  }
+
+  if matches!(direction, Direction::Up | Direction::Down)
+    && !has_matching_tiling_direction
+    && parent.tiling_children().count() > 1
+    && (parent.tiling_children().count() > 2
+      || window_to_move
+        .workspace()
+        .context("No workspace.")?
+        .descendants()
+        .filter(|c| c.is_tiling_window())
+        .count()
+        >= 4)
+  {
+    return stack_with_neighbor(window_to_move, direction, state, config);
   }
 
   // Attempt to move the window to workspace in given direction.
@@ -126,6 +159,100 @@ fn move_tiling_window(
   }
 }
 
+fn normalize_workspace_splits(
+  window: &TilingWindow,
+) -> anyhow::Result<()> {
+  let workspace = window.workspace().context("No workspace.")?;
+  let splits = workspace
+    .descendants()
+    .filter_map(|c| c.as_split().cloned())
+    .collect::<Vec<_>>();
+  for split in splits.into_iter().rev() {
+    if let Some(parent) = split.parent() {
+      if split.child_count() <= 1
+        || (parent
+          .as_direction_container()
+          .is_ok_and(|p| p.tiling_direction() == split.tiling_direction())
+          && !parent
+            .as_split()
+            .is_some_and(|p| p.unstack_fraction(&split.id()).is_some()))
+      {
+        flatten_split_container(split)?;
+      }
+    }
+  }
+  Ok(())
+}
+
+fn move_to_vertical_workspace_edge(
+  window: TilingWindow,
+  direction: &Direction,
+  state: &mut WmState,
+  config: &UserConfig,
+) -> anyhow::Result<()> {
+  let workspace = window.workspace().context("No workspace.")?;
+  if workspace.tiling_direction() == TilingDirection::Horizontal {
+    return invert_workspace_tiling_direction(
+      window, direction, state, config,
+    );
+  }
+  let ancestors = window.ancestors().collect::<Vec<_>>();
+  let index = if *direction == Direction::Up {
+    0
+  } else {
+    workspace.child_count()
+  };
+  move_container_within_tree(
+    &window.clone().into(),
+    &workspace.clone().into(),
+    index,
+    state,
+  )?;
+  for ancestor in ancestors {
+    if ancestor.parent().is_some() {
+      flatten_child_split_containers(&ancestor)?;
+    }
+  }
+  state
+    .pending_sync
+    .queue_containers_to_redraw(workspace.tiling_children());
+  Ok(())
+}
+
+fn stack_with_neighbor(
+  window: TilingWindow,
+  direction: &Direction,
+  state: &mut WmState,
+  config: &UserConfig,
+) -> anyhow::Result<()> {
+  let parent = window.parent().context("No parent.")?;
+  let neighbor = tiling_sibling_in_direction(&window, &Direction::Right)
+    .or_else(|| tiling_sibling_in_direction(&window, &Direction::Left))
+    .context("No neighboring tile.")?;
+  let split = SplitContainer::new(
+    TilingDirection::Vertical,
+    config.value.gaps.clone(),
+  );
+  let children = if *direction == Direction::Up {
+    vec![window.clone().into(), neighbor]
+  } else {
+    vec![neighbor, window.clone().into()]
+  };
+  wrap_in_split_container(&split, &parent, &children)?;
+  split.remember_unstack_shares();
+  resize_tiling_container(&window.clone().into(), 0.5);
+  move_container_within_tree(
+    &window.clone().into(),
+    &split.into(),
+    window.index(),
+    state,
+  )?;
+  state
+    .pending_sync
+    .queue_containers_to_redraw(parent.tiling_children());
+  Ok(())
+}
+
 /// Gets the next sibling `TilingWindow` or `SplitContainer` in the given
 /// direction.
 fn tiling_sibling_in_direction(
@@ -166,6 +293,20 @@ fn move_to_sibling_container(
         .queue_container_to_redraw(window_to_move);
     }
     TilingContainer::Split(sibling_split) => {
+      if matches!(direction, Direction::Left | Direction::Right)
+        && sibling_split.tiling_direction() == TilingDirection::Vertical
+      {
+        move_container_within_tree(
+          &window_to_move.into(),
+          &parent,
+          sibling_split.index(),
+          state,
+        )?;
+        state
+          .pending_sync
+          .queue_containers_to_redraw(parent.tiling_children());
+        return Ok(());
+      }
       let sibling_descendant =
         sibling_split.descendant_in_direction(&direction.inverse());
 
@@ -366,6 +507,28 @@ fn insert_into_ancestor(
     _ => window_ancestor.index() + 1,
   };
 
+  // Restore the saved row share when leaving our temporary stack. A new
+  // equal-share insertion would inflate the neighbor on every repetition.
+  let unstack_sizes = window_ancestor
+    .as_split()
+    .filter(|split| {
+      window_to_move.parent() == Some(window_ancestor.clone())
+        && split.tiling_children().count() > 1
+        && split.tiling_direction() != target_ancestor.tiling_direction()
+    })
+    .and_then(|split| {
+      let moved_size = split.tiling_size()
+        * split.unstack_fraction(&window_to_move.id())?;
+      let siblings = target_ancestor
+        .tiling_children()
+        .map(|child| {
+          let size = child.tiling_size();
+          (child, size)
+        })
+        .collect::<Vec<_>>();
+      Some((moved_size, siblings))
+    });
+
   // Move the window into the container above.
   move_container_within_tree(
     &window_to_move.clone().into(),
@@ -373,6 +536,17 @@ fn insert_into_ancestor(
     target_index,
     state,
   )?;
+
+  if let Some((moved_size, siblings)) = unstack_sizes {
+    for (child, size) in siblings {
+      child.set_tiling_size(if child.id() == window_ancestor.id() {
+        size - moved_size
+      } else {
+        size
+      });
+    }
+    window_to_move.set_tiling_size(moved_size);
+  }
 
   state
     .pending_sync
@@ -588,6 +762,259 @@ mod tests {
       let from_first = move_from_nested_split(&first, &last);
       let from_opposite = move_from_nested_split(&opposite, &last);
       assert_eq!(from_first, from_opposite);
+    }
+  }
+}
+
+#[cfg(test)]
+mod tiling_regressions {
+  use super::*;
+  use crate::{commands::container::attach_container, models::Workspace};
+
+  fn setup(
+    children: Vec<TilingContainer>,
+  ) -> (WmState, Workspace, UserConfig) {
+    let (tx, _) = tokio::sync::mpsc::unbounded_channel();
+    let mut state = WmState::new(
+      wm_platform::Dispatcher::mock(),
+      tx,
+      tokio::sync::mpsc::unbounded_channel().0,
+      tokio::sync::mpsc::unbounded_channel().0,
+    );
+    let mut config = UserConfig::new(Some(
+      std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../resources/assets/sample-config.yaml"),
+    ))
+    .unwrap();
+    config.value.gaps = wm_common::GapsConfig::default();
+    let workspace = Workspace::mock()
+      .gaps_config(config.value.gaps.clone())
+      .tiling_containers(children)
+      .call();
+    let monitor =
+      Monitor::mock().workspaces(vec![workspace.clone()]).call();
+    attach_container(
+      &monitor.into(),
+      &state.root_container.clone().into(),
+      None,
+    )
+    .unwrap();
+    state.pending_sync.clear();
+    (state, workspace, config)
+  }
+
+  #[test]
+  fn two_vertical_presses_reach_full_workspace_width() {
+    for direction in [Direction::Up, Direction::Down] {
+      for count in [3, 4, 8, 16] {
+        for index in 0..count {
+          let windows = (0..count)
+            .map(|_| TilingWindow::mock().call())
+            .collect::<Vec<_>>();
+          let moving = windows[index].clone();
+          let (mut state, workspace, config) =
+            setup(windows.into_iter().map(Into::into).collect());
+          set_focused_descendant(&moving.clone().into(), None);
+          move_tiling_window(
+            moving.clone(),
+            &direction,
+            &mut state,
+            &config,
+          )
+          .unwrap();
+          assert!(moving.parent().unwrap().is_split());
+          assert!((moving.tiling_size() - 0.5).abs() < 0.00001);
+          move_tiling_window(
+            moving.clone(),
+            &direction,
+            &mut state,
+            &config,
+          )
+          .unwrap();
+          assert_eq!(moving.parent(), Some(workspace.clone().into()));
+          assert_eq!(
+            moving.to_rect().unwrap().width(),
+            workspace.to_rect().unwrap().width()
+          );
+          assert!(moving.has_focus(None));
+          assert!(!state.pending_sync.animations_suppressed());
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn repeated_split_return_preserves_equal_and_unequal_sizes() {
+    for vertical in [Direction::Up, Direction::Down] {
+      for horizontal in [Direction::Left, Direction::Right] {
+        for (count, unequal) in [3, 4, 8, 16]
+          .into_iter()
+          .flat_map(|n| [(n, false), (n, true)])
+        {
+          let windows = (0..count)
+            .map(|_| TilingWindow::mock().call())
+            .collect::<Vec<_>>();
+          let moving = windows[if horizontal == Direction::Left {
+            0
+          } else {
+            count - 1
+          }]
+          .clone();
+          let (mut state, workspace, config) =
+            setup(windows.iter().cloned().map(Into::into).collect());
+          if unequal {
+            for (i, window) in windows.iter().enumerate() {
+              window.set_tiling_size(
+                0.5 / count as f32
+                  + i as f32 / (count * (count - 1)) as f32,
+              );
+            }
+          }
+          let before = windows
+            .iter()
+            .map(|w| w.to_rect().unwrap())
+            .collect::<Vec<_>>();
+          for _ in 0..20 {
+            move_tiling_window(
+              moving.clone(),
+              &vertical,
+              &mut state,
+              &config,
+            )
+            .unwrap();
+            move_tiling_window(
+              moving.clone(),
+              &horizontal,
+              &mut state,
+              &config,
+            )
+            .unwrap();
+            normalize_workspace_splits(&moving).unwrap();
+            assert_eq!(workspace.child_count(), count);
+            for (window, rect) in windows.iter().zip(&before) {
+              let after = window.to_rect().unwrap();
+              assert!((after.width() - rect.width()).abs() <= 1);
+              assert_eq!(after.height(), rect.height());
+            }
+          }
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn return_preserves_an_existing_neighbor_column() {
+    for direction in [Direction::Up, Direction::Down] {
+      let a = TilingWindow::mock().call();
+      let b = TilingWindow::mock().call();
+      let column = SplitContainer::mock()
+        .tiling_direction(TilingDirection::Vertical)
+        .tiling_containers(vec![a.clone().into(), b.clone().into()])
+        .call();
+      let moving = TilingWindow::mock().call();
+      let other = TilingWindow::mock().call();
+      let (mut state, workspace, config) = setup(vec![
+        other.clone().into(),
+        column.into(),
+        moving.clone().into(),
+      ]);
+      for _ in 0..20 {
+        move_tiling_window(
+          moving.clone(),
+          &direction,
+          &mut state,
+          &config,
+        )
+        .unwrap();
+        move_tiling_window(
+          moving.clone(),
+          &Direction::Right,
+          &mut state,
+          &config,
+        )
+        .unwrap();
+        normalize_workspace_splits(&moving).unwrap();
+        assert_eq!(workspace.child_count(), 3);
+        assert_eq!(a.parent(), b.parent());
+        assert_eq!(
+          a.direction_container().unwrap().tiling_direction(),
+          TilingDirection::Vertical
+        );
+        assert!((moving.tiling_size() - 1. / 3.).abs() < 0.00001);
+        assert!((other.tiling_size() - 1. / 3.).abs() < 0.00001);
+      }
+    }
+  }
+
+  #[test]
+  fn horizontal_arrows_do_not_insert_into_vertical_column() {
+    let moving = TilingWindow::mock().call();
+    let column = SplitContainer::mock()
+      .tiling_direction(TilingDirection::Vertical)
+      .tiling_containers(vec![
+        TilingWindow::mock().call().into(),
+        TilingWindow::mock().call().into(),
+      ])
+      .call();
+    let (mut state, workspace, config) =
+      setup(vec![moving.clone().into(), column.clone().into()]);
+    let before = moving.to_rect().unwrap();
+    for _ in 0..20 {
+      move_tiling_window(
+        moving.clone(),
+        &Direction::Right,
+        &mut state,
+        &config,
+      )
+      .unwrap();
+      assert_eq!(moving.parent(), Some(workspace.clone().into()));
+      assert_eq!(column.child_count(), 2);
+      assert_eq!(moving.to_rect().unwrap().height(), before.height());
+      move_tiling_window(
+        moving.clone(),
+        &Direction::Left,
+        &mut state,
+        &config,
+      )
+      .unwrap();
+      assert_eq!(moving.to_rect().unwrap(), before);
+    }
+  }
+
+  #[test]
+  fn nested_row_reaches_workspace_edge_in_two_moves() {
+    for direction in [Direction::Up, Direction::Down] {
+      let moving = TilingWindow::mock().call();
+      let row = SplitContainer::mock()
+        .tiling_direction(TilingDirection::Horizontal)
+        .tiling_containers(vec![
+          moving.clone().into(),
+          TilingWindow::mock().call().into(),
+        ])
+        .call();
+      let column = SplitContainer::mock()
+        .tiling_direction(TilingDirection::Vertical)
+        .tiling_containers(vec![
+          row.into(),
+          TilingWindow::mock().call().into(),
+        ])
+        .call();
+      let (mut state, workspace, config) =
+        setup(vec![column.into(), TilingWindow::mock().call().into()]);
+      for _ in 0..2 {
+        move_tiling_window(
+          moving.clone(),
+          &direction,
+          &mut state,
+          &config,
+        )
+        .unwrap();
+      }
+      assert_eq!(moving.parent(), Some(workspace.clone().into()));
+      assert_eq!(
+        moving.to_rect().unwrap().width(),
+        workspace.to_rect().unwrap().width()
+      );
     }
   }
 }

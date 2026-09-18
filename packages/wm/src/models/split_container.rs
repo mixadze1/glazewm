@@ -35,6 +35,8 @@ struct SplitContainerInner {
   tiling_size: f32,
   tiling_direction: TilingDirection,
   gaps_config: GapsConfig,
+  // Original row proportions for a temporary two-part vertical stack.
+  unstack_shares: Option<Vec<(Uuid, f32)>>,
 }
 
 impl SplitContainer {
@@ -50,9 +52,35 @@ impl SplitContainer {
       tiling_size: 1.0,
       tiling_direction,
       gaps_config,
+      unstack_shares: None,
     };
 
     Self(Rc::new(RefCell::new(split)))
+  }
+
+  pub fn remember_unstack_shares(&self) {
+    let shares = self
+      .tiling_children()
+      .map(|child| (child.id(), child.tiling_size()))
+      .collect();
+    self.0.borrow_mut().unstack_shares = Some(shares);
+  }
+
+  pub fn unstack_fraction(&self, id: &Uuid) -> Option<f32> {
+    let inner = self.0.borrow();
+    let shares = inner.unstack_shares.as_ref()?;
+    if inner.children.len() != shares.len()
+      || !inner
+        .children
+        .iter()
+        .all(|child| shares.iter().any(|(id, _)| *id == child.id()))
+    {
+      return None;
+    }
+    shares
+      .iter()
+      .find(|(child, _)| child == id)
+      .map(|(_, size)| *size)
   }
 
   pub fn to_dto(&self) -> anyhow::Result<ContainerDto> {
