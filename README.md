@@ -8,20 +8,23 @@
 
 # GlazeWM Reborn
 
-**A Windows-focused fork of GlazeWM with smooth workspace and window animations.**
+**The idea behind Reborn: give window management a better feel.**
+
+Reborn is a Windows-focused fork of GlazeWM built around the way your desktop **moves, responds, and feels**. Workspace transitions carry their motion through rapid direction changes. Windows travel toward their destination. Resize controls follow your held keys, and focus outlines make the current mode visible. The goal of version 4 is to make everyday tiling feel more connected and responsive.
 
 [![Downloads][downloads-badge]][downloads-link]
 [![Issues][issues-badge]][issues-link]
 
-`glazewm_reborn` builds on [GlazeWM by glzr-io](https://github.com/glzr-io/glazewm), a keyboard-driven tiling window manager inspired by i3wm. This fork adds continuous workspace transitions, animated window transfers, and layout improvements. The executable and configuration names remain compatible with GlazeWM.
+Built on [GlazeWM by glzr-io](https://github.com/glzr-io/glazewm), the keyboard-driven tiling window manager inspired by i3wm. Reborn keeps its YAML configuration and keyboard workflow while adding motion, visual feedback, and layout refinements. The executable and configuration names remain compatible with GlazeWM.
 
 [Installation](#installation) •
+[Version 4 history](#version-4-history) •
 [Default keybindings](#default-keybindings) •
 [Config documentation](#config-documentation) •
 [FAQ](#faq) •
 [Contributing](CONTRIBUTING.md)
 
-![Original GlazeWM demo; see the features below for this fork's additions][demo-video]
+![GlazeWM Reborn 4 demo: workspace motion, keyboard resizing, and focus outlines][demo-video]
 
 </div>
 
@@ -35,7 +38,12 @@
 
 ### What's new in Reborn
 
+- Workspace and window motion is part of the interaction: transitions preserve continuity when you change direction or choose another destination mid-animation.
+- Focus outlines follow rounded window corners with antialiased edges and configurable thickness.
+- `Alt + R` enters resize mode with a configurable highlight color (yellow in the example config). Holding arrows or HJKL changes size in small frame-paced steps without queuing autorepeats; releasing the key stops generating resize steps. The configured resize step defaults to 2% and controls speed.
+- `Alt + V` chooses the direction for the next tiled window. Automatic placement no longer overrides that direction or moves the new window into a different group to accommodate minimum sizes.
 - An `Active` tray checkmark toggles tiling and stays in sync with `Alt + Shift + P`.
+- Pausing removes both the custom outline and the native colored border; resuming restores the configured colors. The tray shows your configured pause shortcut.
 - Automatic safe areas on Windows follow visible Zebar edge bars and the
   Windows taskbar. Showing, hiding, closing, or resizing a bar updates the
   tiling area within approximately 500 ms. Configured outer gaps remain
@@ -49,6 +57,17 @@
 - Consistent sizing when moving tiled windows with directional keybindings.
 - Configurable focused-window outline and keyboard resize limits.
 - Configurable animation durations and easing curves.
+
+## Version 4 history
+
+Version 4 is the Reborn line: a series of changes focused on the **feeling of using a tiling desktop**, from movement between workspaces to the feedback around a single window.
+
+| Release | What changed |
+| --- | --- |
+| [4.0.0 — The Reborn foundation](https://github.com/mixadze1/glazewm_reborn/releases/tag/v4.0.0) | Animated workspace slides with continuous position and velocity when retargeting or reversing; visible intermediate workspaces; directional window transfers with an exit and reveal; configurable duration and easing. Also improved live mouse resizing, minimum-size handling, directional move sizing, and focused-window outlines. |
+| [4.0.2 — Clear active state](https://github.com/mixadze1/glazewm_reborn/releases/tag/v4.0.2) | Added the Active tray checkmark, synchronized with the pause shortcut, so tiling can be toggled from either the keyboard or the tray. |
+| [4.0.3 — A desktop that adapts](https://github.com/mixadze1/glazewm_reborn/releases/tag/v4.0.3) | Added automatic safe areas for visible edge bars and the Windows taskbar. The layout adapts as panels appear, disappear, or change size, while preserving configured outer gaps. |
+| [4.0.4 — More direct control](https://github.com/mixadze1/glazewm_reborn/releases/tag/v4.0.4) | Added rounded, antialiased outlines and a separate resize-mode color; removed borders while paused; preserved the selected tiling direction; replaced queued resize autorepeats with held-key updates that keep the outline visible. The default resize step is 2%. |
 
 ## Installation
 
@@ -118,7 +137,17 @@ keybindings:
     bindings: ["alt+shift+2"]
 ```
 
-The focused outline is controlled by `window_effects.focused_border_width`. Keyboard resize limits are controlled by `window_behavior.resize_respects_minimum_size`; these are separate from mouse resize constraints.
+The focused outline is controlled by `window_effects.focused_border_width`. Set `window_effects.resize_border_color` to change its color during `Alt + R`; leaving this setting out keeps the regular focused color. Exiting resize mode restores the regular color, and pausing tiling clears both borders.
+
+```yaml
+window_effects:
+  focused_border_width: 3
+  resize_border_color: "#ffff00"
+```
+
+Resize speed is controlled by the `resize` commands under `binding_modes` in your configuration. The default is `resize --width +2%` (with matching negative-width and positive/negative-height bindings). Use 1% for half that speed, or 4% for twice the speed. While a key is held, the configured step is divided into smaller updates on a 16 ms timer; missed frames are skipped rather than replayed after release. This timing is independent of window animation duration.
+
+Keyboard resize limits are controlled by `window_behavior.resize_respects_minimum_size`; these are separate from mouse resize constraints.
 
 To use a different config file location, you can launch the GlazeWM executable with the CLI argument `--config="..."`, like so:
 
@@ -435,4 +464,4 @@ This is a fork of [glzr-io/glazewm](https://github.com/glzr-io/glazewm). Credit 
 [downloads-link]: https://github.com/mixadze1/glazewm_reborn/releases
 [issues-badge]: https://img.shields.io/github/issues/mixadze1/glazewm_reborn
 [issues-link]: https://github.com/mixadze1/glazewm_reborn/issues
-[demo-video]: resources/assets/demo.webp
+[demo-video]: resources/assets/reborn-demo.gif
