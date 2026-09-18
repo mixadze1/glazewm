@@ -97,12 +97,9 @@ fn set_tiling(
       original_parent == target_parent && original_index < target_index,
     );
   detach_container(window.clone().into())?;
-  if let Err(error) = place_tiling_window(
-    &tiling_window,
-    &target_parent,
-    target_index,
-    &config.value.gaps,
-  ) {
+  if let Err(error) =
+    place_tiling_window(&tiling_window, &target_parent, target_index)
+  {
     // A failed geometry query must not drop the managed window.
     crate::commands::container::attach_container(
       &window.clone().into(),

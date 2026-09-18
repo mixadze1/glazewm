@@ -259,12 +259,8 @@ fn create_window(
     .into(),
   };
 
-  let window_container = attach_new_window(
-    window_container,
-    &target_parent,
-    target_index,
-    config,
-  )?;
+  let window_container =
+    attach_new_window(window_container, &target_parent, target_index)?;
 
   // The OS might spawn the window on a different monitor to the target
   // parent, so adjustments might need to be made because of DPI.
@@ -281,15 +277,9 @@ fn attach_new_window(
   window_container: WindowContainer,
   target_parent: &Container,
   target_index: usize,
-  config: &UserConfig,
 ) -> anyhow::Result<WindowContainer> {
   if let WindowContainer::TilingWindow(window) = &window_container {
-    place_tiling_window(
-      window,
-      target_parent,
-      target_index,
-      &config.value.gaps,
-    )?;
+    place_tiling_window(window, target_parent, target_index)?;
   } else {
     attach_container(
       &window_container.clone().into(),

@@ -3,16 +3,13 @@
 #![allow(clippy::cast_precision_loss)]
 
 use anyhow::Context;
-use wm_common::{GapsConfig, TilingDirection};
+use wm_common::TilingDirection;
 #[cfg(target_os = "windows")]
 use wm_platform::NativeWindowWindowsExt;
 use wm_platform::Rect;
 
 use crate::{
-  models::{
-    Container, SplitContainer, TilingContainer, TilingWindow,
-    WindowContainer,
-  },
+  models::{Container, TilingContainer, TilingWindow, WindowContainer},
   traits::{
     CommonGetters, PositionGetters, TilingDirectionGetters,
     TilingSizeGetters, WindowGetters, MIN_TILING_SIZE,
@@ -255,14 +252,13 @@ pub fn plan_tiling_insertion(
   )
 }
 
-/// Prefer the requested row/column. If it is full, split a nearby tile
-/// along the other axis before falling back to floating. All feasibility
-/// checks happen before mutating the tree.
+/// Respect native minimums where possible without changing the selected
+/// parent or tiling direction. If they cannot fit, the caller attaches
+/// normally to the same target instead of overriding the user's layout.
 pub fn attach_tiling_window_with_minimums(
   window: &TilingWindow,
   parent: &Container,
   index: usize,
-  gaps_config: &GapsConfig,
 ) -> anyhow::Result<bool> {
   if let Some(plan) = plan_tiling_insertion(window, parent)? {
     super::attach_container(&window.clone().into(), parent, Some(index))?;
@@ -272,74 +268,6 @@ pub fn attach_tiling_window_with_minimums(
     return Ok(true);
   }
 
-  let horizontal = parent.as_direction_container()?.tiling_direction()
-    != TilingDirection::Horizontal;
-  let mut candidates = parent.tiling_children().collect::<Vec<_>>();
-  // The requested insertion index follows the focused tile.
-  candidates
-    .sort_by_key(|child| child.index().abs_diff(index.saturating_sub(1)));
-  for candidate in candidates {
-    let rect = candidate.to_rect()?;
-    let (gap_x, gap_y) = candidate.inner_gaps()?;
-    let available = (if horizontal {
-      rect.width() - gap_x
-    } else {
-      rect.height() - gap_y
-    }) as f32;
-    let cross = (if horizontal {
-      rect.height()
-    } else {
-      rect.width()
-    }) as f32;
-    let new_container = window.clone().into();
-    if available <= 0.
-      || minimum_length(&candidate, !horizontal)? > cross
-      || minimum_length(&new_container, !horizontal)? > cross
-    {
-      continue;
-    }
-    let minimums = [&candidate, &new_container]
-      .map(|child| {
-        Ok(
-          ((minimum_length(child, horizontal)? + 1.) / available)
-            .max(MIN_TILING_SIZE),
-        )
-      })
-      .into_iter()
-      .collect::<anyhow::Result<Vec<_>>>()?;
-    let Some(sizes) = allocate_shares(&[0.5, 0.5], &minimums) else {
-      continue;
-    };
-    let split = SplitContainer::new(
-      if horizontal {
-        TilingDirection::Horizontal
-      } else {
-        TilingDirection::Vertical
-      },
-      gaps_config.clone(),
-    );
-    super::wrap_in_split_container(
-      &split,
-      parent,
-      std::slice::from_ref(&candidate),
-    )?;
-    super::attach_container(&window.clone().into(), &split.into(), None)?;
-    candidate.set_tiling_size(sizes[0]);
-    window.set_tiling_size(sizes[1]);
-    return Ok(true);
-  }
-  // A focused nested split may be full while its ancestors have room.
-  // Try those before declaring the whole workspace unable to tile.
-  if parent.as_split().is_some() {
-    if let Some(ancestor) = parent.parent() {
-      return attach_tiling_window_with_minimums(
-        window,
-        &ancestor,
-        parent.index() + 1,
-        gaps_config,
-      );
-    }
-  }
   Ok(false)
 }
 
@@ -350,18 +278,20 @@ pub fn place_tiling_window(
   window: &TilingWindow,
   parent: &Container,
   index: usize,
-  gaps_config: &GapsConfig,
 ) -> anyhow::Result<()> {
   refresh_window_minimum(&window.clone().into())?;
   refresh_tiling_minimums(
     &parent.workspace().context("No target workspace.")?.into(),
   )?;
-  if !attach_tiling_window_with_minimums(
-    window,
-    parent,
-    index,
-    gaps_config,
-  )? {
+  attach_tiling_window_at_target(window, parent, index)
+}
+
+fn attach_tiling_window_at_target(
+  window: &TilingWindow,
+  parent: &Container,
+  index: usize,
+) -> anyhow::Result<()> {
+  if !attach_tiling_window_with_minimums(window, parent, index)? {
     super::attach_container(&window.clone().into(), parent, Some(index))?;
   }
   Ok(())
@@ -527,7 +457,7 @@ mod tests {
   }
 
   #[test]
-  fn full_rows_and_columns_use_the_other_axis_automatically() {
+  fn full_rows_and_columns_keep_the_selected_axis() {
     for horizontal in [true, false] {
       let (width, height, new_width, new_height) = if horizontal {
         (800, 100, 400, 100)
@@ -540,32 +470,31 @@ mod tests {
       let (_monitor, parent) =
         workspace(horizontal, vec![a.clone().into(), b.clone().into()]);
       let parent: Container = parent.into();
-      let untouched = b.to_rect().unwrap();
       assert!(plan_tiling_insertion(&new, &parent).unwrap().is_none());
-      assert!(attach_tiling_window_with_minimums(
-        &new,
-        &parent,
-        1,
-        &GapsConfig::default(),
-      )
-      .unwrap());
-      assert_eq!(b.to_rect().unwrap(), untouched);
+      attach_tiling_window_at_target(&new, &parent, 1).unwrap();
       assert_eq!(a.parent().unwrap(), new.parent().unwrap());
-      assert_eq!(parent.child_count(), 2);
-      for (child, min_width, min_height) in [
-        (a, width, height),
-        (b, width, height),
-        (new, new_width, new_height),
-      ] {
-        let rect = child.to_rect().unwrap();
-        assert!(rect.width() >= min_width);
-        assert!(rect.height() >= min_height);
+      assert_eq!(new.parent(), Some(parent.clone()));
+      assert_eq!(parent.child_count(), 3);
+      assert_eq!(new.index(), 1);
+      let a_rect = a.to_rect().unwrap();
+      let new_rect = new.to_rect().unwrap();
+      let b_rect = b.to_rect().unwrap();
+      if horizontal {
+        assert_eq!(a_rect.y(), new_rect.y());
+        assert_eq!(b_rect.y(), new_rect.y());
+        assert!(a_rect.right <= new_rect.left);
+        assert!(new_rect.right <= b_rect.left);
+      } else {
+        assert_eq!(a_rect.x(), new_rect.x());
+        assert_eq!(b_rect.x(), new_rect.x());
+        assert!(a_rect.bottom <= new_rect.top);
+        assert!(new_rect.bottom <= b_rect.top);
       }
     }
   }
 
   #[test]
-  fn insertion_checks_other_tiles_when_the_focused_tile_is_too_small() {
+  fn insertion_does_not_redirect_to_a_larger_neighbor() {
     let a = window(500, 100);
     let b = window(1000, 100);
     let new = window(900, 100);
@@ -574,22 +503,14 @@ mod tests {
     a.set_tiling_size(0.33);
     b.set_tiling_size(0.67);
     let parent: Container = parent.into();
-    let untouched = a.to_rect().unwrap();
-    assert!(attach_tiling_window_with_minimums(
-      &new,
-      &parent,
-      1,
-      &GapsConfig::default(),
-    )
-    .unwrap());
-    assert_eq!(a.to_rect().unwrap(), untouched);
-    assert_eq!(new.parent(), b.parent());
-    assert!(new.to_rect().unwrap().width() >= 900);
-    assert!(b.to_rect().unwrap().width() >= 1000);
+    attach_tiling_window_at_target(&new, &parent, 1).unwrap();
+    assert_eq!(new.parent(), Some(parent.clone()));
+    assert_eq!(new.index(), 1);
+    assert_eq!(parent.child_count(), 3);
   }
 
   #[test]
-  fn insertion_escapes_a_full_nested_split_before_floating() {
+  fn insertion_stays_in_a_full_nested_split() {
     let a = window(400, 480);
     let b = window(400, 480);
     let sibling = window(400, 100);
@@ -603,23 +524,16 @@ mod tests {
     assert!(plan_tiling_insertion(&new, &split.clone().into())
       .unwrap()
       .is_none());
-    assert!(attach_tiling_window_with_minimums(
-      &new,
-      &split.into(),
-      1,
-      &GapsConfig::default(),
-    )
-    .unwrap());
-    assert_eq!(new.parent(), Some(workspace.into()));
-    for (window, width, height) in [
-      (a, 400, 480),
-      (b, 400, 480),
-      (sibling, 400, 100),
-      (new, 500, 600),
-    ] {
-      let rect = window.to_rect().unwrap();
-      assert!(rect.width() >= width && rect.height() >= height);
-    }
+    let untouched = sibling.to_rect().unwrap();
+    attach_tiling_window_at_target(&new, &split.clone().into(), 1)
+      .unwrap();
+    assert_eq!(new.parent(), Some(split.clone().into()));
+    assert_eq!(split.child_count(), 3);
+    assert_eq!(workspace.child_count(), 2);
+    assert_eq!(split.tiling_direction(), TilingDirection::Vertical);
+    assert_eq!(sibling.to_rect().unwrap(), untouched);
+    assert!(a.to_rect().unwrap().bottom <= new.to_rect().unwrap().top);
+    assert!(new.to_rect().unwrap().bottom <= b.to_rect().unwrap().top);
   }
 
   #[test]
@@ -631,13 +545,9 @@ mod tests {
       workspace(true, vec![a.clone().into(), b.clone().into()]);
     let parent: Container = parent.into();
     let before = (a.to_rect().unwrap(), b.to_rect().unwrap());
-    assert!(!attach_tiling_window_with_minimums(
-      &new,
-      &parent,
-      1,
-      &GapsConfig::default(),
-    )
-    .unwrap());
+    assert!(
+      !attach_tiling_window_with_minimums(&new, &parent, 1,).unwrap()
+    );
     assert_eq!(before, (a.to_rect().unwrap(), b.to_rect().unwrap()));
     assert_eq!(parent.child_count(), 2);
     assert!(new.is_detached());
