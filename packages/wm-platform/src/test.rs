@@ -7,6 +7,8 @@ mod dispatcher;
 mod display;
 mod error;
 mod event_loop;
+#[cfg(target_os = "windows")]
+mod focus_outline;
 mod keybinding_listener;
 mod models;
 mod mouse_listener;
@@ -20,6 +22,8 @@ pub use dispatcher::*;
 pub use display::*;
 pub use error::*;
 pub use event_loop::*;
+#[cfg(target_os = "windows")]
+pub use focus_outline::FocusOutline;
 pub use keybinding_listener::*;
 pub use models::*;
 pub use mouse_listener::*;

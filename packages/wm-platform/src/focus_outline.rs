@@ -1,33 +1,37 @@
 //! A focus-only, click-through outline, owned by the event-loop thread.
-use std::{marker::PhantomData, rc::Rc, sync::OnceLock};
+use std::{cell::Cell, marker::PhantomData, rc::Rc, sync::OnceLock};
 
 use windows::{
   core::w,
   Win32::{
-    Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM},
+    Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
     Graphics::{
       Dwm::{
         DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS,
+        DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DEFAULT, DWMWCP_ROUND,
+        DWMWCP_ROUNDSMALL, DWM_WINDOW_CORNER_PREFERENCE,
       },
-      Gdi::{
-        BeginPaint, CombineRgn, CreateRectRgn, CreateSolidBrush,
-        DeleteObject, EndPaint, FillRect, InvalidateRect, SetWindowRgn,
-        HGDIOBJ, PAINTSTRUCT, RGN_DIFF,
-      },
+      Gdi::{BeginPaint, EndPaint, PAINTSTRUCT},
     },
-    UI::WindowsAndMessaging::{
-      CreateWindowExW, DefWindowProcW, DestroyWindow, GetForegroundWindow,
-      GetWindowLongPtrW, GetWindowRect, IsIconic, IsWindowVisible,
-      KillTimer, RegisterClassW, SetLayeredWindowAttributes, SetTimer,
-      SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA,
-      HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE,
-      WM_ERASEBKGND, WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
-      WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT, WS_POPUP,
+    UI::{
+      HiDpi::GetDpiForWindow,
+      WindowsAndMessaging::{
+        CreateWindowExW, DefWindowProcW, DestroyWindow,
+        GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, IsIconic,
+        IsWindowVisible, IsZoomed, KillTimer, RegisterClassW, SetTimer,
+        SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA,
+        GWL_STYLE, HWND_TOPMOST, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE,
+        WM_ERASEBKGND, WM_PAINT, WM_TIMER, WNDCLASSW, WS_CAPTION,
+        WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        WS_EX_TRANSPARENT, WS_POPUP, WS_THICKFRAME,
+      },
     },
   },
 };
 
 use crate::{Color, NativeWindow};
+
+mod bitmap;
 
 // Win32 timer cadence, independent of the user's animation durations.
 const TRACK_INTERVAL_MS: u32 = 16;
@@ -38,6 +42,7 @@ struct OutlineState {
   target: HWND,
   color: Color,
   width: i32,
+  last_shape: Cell<Option<(i32, i32, i32)>>,
 }
 
 impl OutlineState {
@@ -69,31 +74,30 @@ impl OutlineState {
         return;
       }
       let mut previous = RECT::default();
+      let radius = window_corner_radius(self.target);
+      let width = frame.right - frame.left;
+      let height = frame.bottom - frame.top;
+      let shape = (width, height, radius);
       if IsWindowVisible(hwnd).as_bool()
         && GetWindowRect(hwnd, &raw mut previous).is_ok()
         && previous == frame
+        && self.last_shape.get() == Some(shape)
       {
         return;
       }
-      let width = frame.right - frame.left;
-      let height = frame.bottom - frame.top;
-      let inset = self.width.min(width / 2).min(height / 2).max(1);
-      let outer = CreateRectRgn(0, 0, width, height);
-      let inner =
-        CreateRectRgn(inset, inset, width - inset, height - inset);
-      if outer.0 == 0 || inner.0 == 0 {
-        let _ = DeleteObject(HGDIOBJ(outer.0));
-        let _ = DeleteObject(HGDIOBJ(inner.0));
+      if width <= 0 || height <= 0 {
         let _ = ShowWindow(hwnd, SW_HIDE);
         return;
       }
-      let combined = CombineRgn(outer, outer, inner, RGN_DIFF);
-      let _ = DeleteObject(HGDIOBJ(inner.0));
-      // Windows takes ownership only when SetWindowRgn succeeds.
-      if combined.0 == 0 || SetWindowRgn(hwnd, outer, true) == 0 {
-        let _ = DeleteObject(HGDIOBJ(outer.0));
-        let _ = ShowWindow(hwnd, SW_HIDE);
-        return;
+      // Reuse the composited bitmap when only the window position changes.
+      if self.last_shape.get() != Some(shape) {
+        if bitmap::render(hwnd, &frame, self.width, radius, &self.color)
+          .is_err()
+        {
+          let _ = ShowWindow(hwnd, SW_HIDE);
+          return;
+        }
+        self.last_shape.set(Some(shape));
       }
       let _ = SetWindowPos(
         hwnd,
@@ -106,6 +110,50 @@ impl OutlineState {
       );
     }
   }
+}
+
+/// DWM exposes a rounding preference, rather than the rendered contour.
+/// Match standard Windows 11 radii; older Windows versions fall back to
+/// square corners when the attribute is unavailable.
+fn window_corner_radius(target: HWND) -> i32 {
+  let mut preference = DWMWCP_DEFAULT;
+  unsafe {
+    let supported = DwmGetWindowAttribute(
+      target,
+      DWMWA_WINDOW_CORNER_PREFERENCE,
+      std::ptr::from_mut(&mut preference).cast(),
+      u32::try_from(std::mem::size_of_val(&preference)).unwrap(),
+    )
+    .is_ok();
+    let style = GetWindowLongPtrW(target, GWL_STYLE);
+    let frame_mask = isize::try_from(WS_CAPTION.0 | WS_THICKFRAME.0)
+      .expect("Window frame style flags fit in an isize");
+    let has_frame = style & frame_mask != 0;
+    corner_radius(
+      supported.then_some(preference),
+      IsZoomed(target).as_bool(),
+      has_frame,
+      GetDpiForWindow(target).max(96),
+    )
+  }
+}
+
+fn corner_radius(
+  preference: Option<DWM_WINDOW_CORNER_PREFERENCE>,
+  maximized: bool,
+  has_frame: bool,
+  dpi: u32,
+) -> i32 {
+  if maximized {
+    return 0;
+  }
+  let logical_radius = match preference {
+    Some(DWMWCP_ROUND) => 8,
+    Some(DWMWCP_ROUNDSMALL) => 4,
+    Some(DWMWCP_DEFAULT) if has_frame => 8,
+    _ => 0,
+  };
+  i32::try_from((logical_radius * u64::from(dpi) + 48) / 96).unwrap_or(0)
 }
 
 unsafe extern "system" fn window_proc(
@@ -127,15 +175,10 @@ unsafe extern "system" fn window_proc(
       }
       WM_ERASEBKGND => return LRESULT(1),
       WM_PAINT => {
-        // SAFETY: The paint DC and brush are paired with their cleanup.
+        // The per-pixel surface is supplied by UpdateLayeredWindow.
         unsafe {
           let mut paint = PAINTSTRUCT::default();
-          let dc = BeginPaint(hwnd, &raw mut paint);
-          let brush = CreateSolidBrush(COLORREF(state.color.to_bgr()));
-          if brush.0 != 0 {
-            FillRect(dc, &raw const paint.rcPaint, brush);
-            let _ = DeleteObject(HGDIOBJ(brush.0));
-          }
+          let _ = BeginPaint(hwnd, &raw mut paint);
           let _ = EndPaint(hwnd, &raw const paint);
         }
         return LRESULT(0);
@@ -177,6 +220,7 @@ impl FocusOutline {
         target: HWND(window.id().0),
         color,
         width: i32::from(width),
+        last_shape: Cell::new(None),
       }),
       _thread_bound: PhantomData,
     };
@@ -209,12 +253,6 @@ impl FocusOutline {
         GWLP_USERDATA,
         std::ptr::from_ref(outline.state.as_ref()) as isize,
       );
-      SetLayeredWindowAttributes(
-        outline.hwnd,
-        COLORREF(0),
-        outline.state.color.a,
-        LWA_ALPHA,
-      )?;
       if SetTimer(outline.hwnd, TRACK_TIMER, TRACK_INTERVAL_MS, None) == 0
       {
         return Err(crate::Error::Platform(
@@ -235,16 +273,10 @@ impl FocusOutline {
     self.state.target = HWND(window.id().0);
     self.state.color = color;
     self.state.width = i32::from(width);
+    self.state.last_shape.set(None);
     unsafe {
       // Force geometry/region refresh even when only width changed.
       let _ = ShowWindow(self.hwnd, SW_HIDE);
-      SetLayeredWindowAttributes(
-        self.hwnd,
-        COLORREF(0),
-        self.state.color.a,
-        LWA_ALPHA,
-      )?;
-      let _ = InvalidateRect(self.hwnd, None, false);
     }
     self.state.track(self.hwnd);
     Ok(())
@@ -260,6 +292,93 @@ impl Drop for FocusOutline {
     unsafe {
       let _ = KillTimer(self.hwnd, TRACK_TIMER);
       let _ = DestroyWindow(self.hwnd);
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use windows::Win32::Graphics::Dwm::DWMWCP_DONOTROUND;
+
+  use super::*;
+
+  #[test]
+  fn outline_radius_matches_preference_and_dpi() {
+    assert_eq!(corner_radius(Some(DWMWCP_ROUND), false, false, 96), 8);
+    assert_eq!(corner_radius(Some(DWMWCP_ROUND), false, false, 144), 12);
+    assert_eq!(
+      corner_radius(Some(DWMWCP_ROUNDSMALL), false, false, 192),
+      8
+    );
+    assert_eq!(corner_radius(Some(DWMWCP_DEFAULT), false, true, 96), 8);
+    assert_eq!(corner_radius(Some(DWMWCP_DEFAULT), false, false, 96), 0);
+    assert_eq!(corner_radius(Some(DWMWCP_DONOTROUND), false, true, 96), 0);
+    assert_eq!(corner_radius(Some(DWMWCP_ROUND), true, true, 192), 0);
+    assert_eq!(corner_radius(None, false, true, 96), 0);
+  }
+
+  #[test]
+  fn outline_layered_surface_uploads_and_resizes() {
+    // Exercise the real Windows compositing API without showing a window
+    // or taking focus from the user's desktop.
+    unsafe {
+      let class = w!("GlazeWM_OutlineRenderTest");
+      RegisterClassW(&WNDCLASSW {
+        lpszClassName: class,
+        lpfnWndProc: Some(window_proc),
+        ..Default::default()
+      });
+      let hwnd = CreateWindowExW(
+        WS_EX_LAYERED
+          | WS_EX_TRANSPARENT
+          | WS_EX_NOACTIVATE
+          | WS_EX_TOOLWINDOW,
+        class,
+        w!(""),
+        WS_POPUP,
+        0,
+        0,
+        100,
+        80,
+        None,
+        None,
+        None,
+        None,
+      );
+      assert_ne!(hwnd.0, 0);
+      let color = Color {
+        r: 100,
+        g: 160,
+        b: 255,
+        a: 180,
+      };
+      let first = bitmap::render(
+        hwnd,
+        &RECT {
+          left: 0,
+          top: 0,
+          right: 100,
+          bottom: 80,
+        },
+        3,
+        8,
+        &color,
+      );
+      let second = bitmap::render(
+        hwnd,
+        &RECT {
+          left: 10,
+          top: 20,
+          right: 210,
+          bottom: 120,
+        },
+        4,
+        12,
+        &color,
+      );
+      let _ = DestroyWindow(hwnd);
+      first.unwrap();
+      second.unwrap();
     }
   }
 }
