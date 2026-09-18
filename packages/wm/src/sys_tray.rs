@@ -12,12 +12,14 @@ use tray_icon::{
   menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
   Icon, TrayIcon, TrayIconBuilder,
 };
+use wm_common::InvokeCommand;
 #[cfg(target_os = "windows")]
 use wm_platform::DispatcherExtWindows;
 use wm_platform::{Dispatcher, ThreadBound};
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum TrayMenuId {
+  ToggleActive,
   ReloadConfig,
   ShowConfigFolder,
   #[cfg(target_os = "windows")]
@@ -29,6 +31,7 @@ enum TrayMenuId {
 impl Display for TrayMenuId {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     match self {
+      TrayMenuId::ToggleActive => write!(f, "toggle_active"),
       TrayMenuId::ReloadConfig => write!(f, "reload_config"),
       TrayMenuId::ShowConfigFolder => write!(f, "show_config_folder"),
       #[cfg(target_os = "windows")]
@@ -46,6 +49,7 @@ impl FromStr for TrayMenuId {
 
   fn from_str(event: &str) -> Result<Self, Self::Err> {
     match event {
+      "toggle_active" => Ok(Self::ToggleActive),
       "show_config_folder" => Ok(Self::ShowConfigFolder),
       "reload_config" => Ok(Self::ReloadConfig),
       #[cfg(target_os = "windows")]
@@ -58,10 +62,11 @@ impl FromStr for TrayMenuId {
 }
 
 pub struct SystemTray {
-  pub config_reload_rx: mpsc::UnboundedReceiver<()>,
+  pub command_rx: mpsc::UnboundedReceiver<InvokeCommand>,
   pub exit_rx: mpsc::UnboundedReceiver<()>,
   _icon_thread: Option<std::thread::JoinHandle<()>>,
   _tray_icon: ThreadBound<TrayIcon>,
+  active_item: ThreadBound<CheckMenuItem>,
 }
 
 impl SystemTray {
@@ -71,7 +76,7 @@ impl SystemTray {
     dispatcher: Dispatcher,
   ) -> anyhow::Result<Self> {
     let (exit_tx, exit_rx) = mpsc::unbounded_channel();
-    let (config_reload_tx, config_reload_rx) = mpsc::unbounded_channel();
+    let (command_tx, command_rx) = mpsc::unbounded_channel();
 
     let animations_enabled = Arc::new(Mutex::new({
       #[cfg(target_os = "windows")]
@@ -92,13 +97,16 @@ impl SystemTray {
         .unwrap_or(false),
     ));
 
-    let tray_icon = dispatcher.dispatch_sync(|| {
-      let tray_icon = Self::create_tray_icon(
+    let (tray_icon, active_item) = dispatcher.dispatch_sync(|| {
+      let (tray_icon, active_item) = Self::create_tray_icon(
         *animations_enabled.lock().unwrap(),
         *run_on_startup_enabled.lock().unwrap(),
       )
       .unwrap();
-      ThreadBound::new(tray_icon, dispatcher.clone())
+      (
+        ThreadBound::new(tray_icon, dispatcher.clone()),
+        ThreadBound::new(active_item, dispatcher.clone()),
+      )
     })?;
 
     // Spawn thread to handle tray menu events.
@@ -112,7 +120,7 @@ impl SystemTray {
             &menu_event,
             &dispatcher,
             &config_path,
-            &config_reload_tx,
+            &command_tx,
             &exit_tx,
             &animations_enabled,
             &run_on_startup_enabled,
@@ -124,11 +132,18 @@ impl SystemTray {
     });
 
     Ok(Self {
-      config_reload_rx,
+      command_rx,
       exit_rx,
       _icon_thread: Some(icon_thread),
       _tray_icon: tray_icon,
+      active_item,
     })
+  }
+
+  /// Reflect the WM's actual pause state, including keyboard/IPC changes.
+  pub fn set_active(&self, active: bool) -> anyhow::Result<()> {
+    self.active_item.with(|item| item.set_checked(active))?;
+    Ok(())
   }
 
   fn create_tray_icon(
@@ -136,7 +151,15 @@ impl SystemTray {
     #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
     animations_enabled: bool,
     run_on_startup_enabled: bool,
-  ) -> anyhow::Result<TrayIcon> {
+  ) -> anyhow::Result<(TrayIcon, CheckMenuItem)> {
+    let active_item = CheckMenuItem::with_id(
+      TrayMenuId::ToggleActive,
+      "Active",
+      true,
+      true,
+      None,
+    );
+
     let reload_config_item = MenuItem::with_id(
       TrayMenuId::ReloadConfig,
       "Reload config",
@@ -173,6 +196,8 @@ impl SystemTray {
 
     let tray_menu = Menu::new();
     tray_menu.append_items(&[
+      &active_item,
+      &PredefinedMenuItem::separator(),
       &reload_config_item,
       &config_dir_item,
       #[cfg(target_os = "windows")]
@@ -192,7 +217,7 @@ impl SystemTray {
       .with_icon(icon)
       .build()?;
 
-    Ok(tray_icon)
+    Ok((tray_icon, active_item))
   }
 
   fn load_icon(bytes: &[u8]) -> anyhow::Result<Icon> {
@@ -217,7 +242,7 @@ impl SystemTray {
     menu_id: &TrayMenuId,
     dispatcher: &Dispatcher,
     config_path: &Path,
-    config_reload_tx: &mpsc::UnboundedSender<()>,
+    command_tx: &mpsc::UnboundedSender<InvokeCommand>,
     exit_tx: &mpsc::UnboundedSender<()>,
     // LINT: `animations_enabled` is only used on Windows.
     #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
@@ -227,6 +252,10 @@ impl SystemTray {
     tracing::info!("Processing tray menu event: {:?}", menu_id);
 
     match menu_id {
+      TrayMenuId::ToggleActive => {
+        command_tx.send(InvokeCommand::WmTogglePause)?;
+        Ok(())
+      }
       TrayMenuId::ShowConfigFolder => {
         dispatcher.open_file_explorer({
           #[cfg(target_os = "windows")]
@@ -244,7 +273,7 @@ impl SystemTray {
         Ok(())
       }
       TrayMenuId::ReloadConfig => {
-        config_reload_tx.send(())?;
+        command_tx.send(InvokeCommand::WmReloadConfig)?;
         Ok(())
       }
       #[cfg(target_os = "windows")]

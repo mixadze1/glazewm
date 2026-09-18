@@ -20,7 +20,7 @@ use tracing_subscriber::{
   fmt::{self, writer::MakeWriterExt},
   layer::SubscriberExt,
 };
-use wm_common::{AppCommand, InvokeCommand, Verbosity, WmEvent};
+use wm_common::{AppCommand, Verbosity, WmEvent};
 #[cfg(target_os = "macos")]
 use wm_platform::DispatcherExtMacOs;
 use wm_platform::{
@@ -254,9 +254,12 @@ async fn start_wm(
       Some(wm_event) = wm.event_rx.recv() => {
         tracing::debug!("Received WM event: {:?}", wm_event);
 
-        // Disable mouse listener when the WM is paused.
+        // Sync the tray and disable mouse listener when the WM is paused.
         if let WmEvent::PauseChanged { is_paused } = wm_event {
           let _ = mouse_listener.enable(!is_paused);
+          if let Err(err) = tray.set_active(!is_paused) {
+            tracing::warn!("Failed to update tray active state: {err}");
+          }
         }
 
         // Update keybinding and mouse listeners on config changes.
@@ -288,9 +291,9 @@ async fn start_wm(
 
         Ok(())
       },
-      Some(()) = tray.config_reload_rx.recv() => {
+      Some(command) = tray.command_rx.recv() => {
         wm.process_commands(
-          &vec![InvokeCommand::WmReloadConfig],
+          &vec![command],
           None,
           &mut config,
         ).map(|_| ())

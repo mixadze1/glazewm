@@ -1,6 +1,6 @@
 <div align="center">
 
-> Version 4.0.0 is available: [download the Windows x64 release](https://github.com/mixadze1/glazewm_reborn/releases/latest).
+> Version 4.0.2 is available: [download the Windows x64 release](https://github.com/mixadze1/glazewm_reborn/releases/latest).
 
   <br>
   <img src="./resources/assets/logo.svg" width="230" alt="GlazeWM logo" />
@@ -35,6 +35,7 @@
 
 ### What's new in Reborn
 
+- An `Active` tray checkmark toggles tiling and stays in sync with `Alt + Shift + P`.
 - Smooth workspace slides that preserve window positions and motion when changing destination rapidly.
 - Visible windows on intermediate workspaces when travelling across several desktops.
 - Directional window transfers: exit toward the destination, then reveal at the new layout position.
@@ -44,7 +45,7 @@
 
 ## Installation
 
-1. Download `glazewm-v4.0.0-windows-x64.zip` from the [Reborn releases](https://github.com/mixadze1/glazewm_reborn/releases/latest).
+1. Download `glazewm-v4.0.2-windows-x64.zip` from the [Reborn releases](https://github.com/mixadze1/glazewm_reborn/releases/latest).
 2. Extract the entire archive into one directory.
 3. Close any existing GlazeWM instance, then launch `glazewm.exe`.
 
@@ -57,7 +58,7 @@ Existing configuration is read from `%USERPROFILE%\.glzr\glazewm\config.yaml`. B
 Use the Rust toolchain specified by this repository and the Windows C++ build tools. From PowerShell:
 
 ```powershell
-$env:VERSION_NUMBER = '4.0.0'
+$env:VERSION_NUMBER = '4.0.2'
 cargo build --release -p wm -p wm-cli -p wm-watcher
 ```
 
