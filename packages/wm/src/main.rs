@@ -126,6 +126,9 @@ async fn start_wm(
 
   // Add application icon to system tray.
   let mut tray = SystemTray::new(&config.path, dispatcher.clone())?;
+  tray.update_active_shortcuts(
+    config.active_keybinding_configs(&[], false),
+  )?;
 
   let mut wm = WindowManager::new(&mut config, dispatcher.clone())?;
 
@@ -278,6 +281,12 @@ async fn start_wm(
             | WmEvent::BindingModesChanged { .. }
             | WmEvent::PauseChanged { .. }
         ) {
+          if let Err(err) = tray.update_active_shortcuts(
+            config.active_keybinding_configs(&wm.state.binding_modes, false),
+          ) {
+            tracing::warn!("Failed to update tray shortcuts: {err}");
+          }
+
           keybinding_listener.update(
             &config
               .active_keybinding_configs(&wm.state.binding_modes, false)

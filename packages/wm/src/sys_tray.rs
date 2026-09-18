@@ -12,7 +12,7 @@ use tray_icon::{
   menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
   Icon, TrayIcon, TrayIconBuilder,
 };
-use wm_common::InvokeCommand;
+use wm_common::{InvokeCommand, KeybindingConfig};
 #[cfg(target_os = "windows")]
 use wm_platform::DispatcherExtWindows;
 use wm_platform::{Dispatcher, ThreadBound};
@@ -143,6 +143,37 @@ impl SystemTray {
   /// Reflect the WM's actual pause state, including keyboard/IPC changes.
   pub fn set_active(&self, active: bool) -> anyhow::Result<()> {
     self.active_item.with(|item| item.set_checked(active))?;
+    Ok(())
+  }
+
+  /// Show the currently configured pause shortcuts without registering
+  /// additional menu accelerators (the keybinding listener owns them).
+  pub fn update_active_shortcuts(
+    &self,
+    keybindings: impl Iterator<Item = KeybindingConfig>,
+  ) -> anyhow::Result<()> {
+    let mut shortcuts = Vec::new();
+    for binding in keybindings
+      .filter(|kb| kb.commands.contains(&InvokeCommand::WmTogglePause))
+      .flat_map(|kb| kb.bindings)
+    {
+      let shortcut = binding
+        .keys()
+        .iter()
+        .map(|key| key.to_string().to_uppercase())
+        .collect::<Vec<_>>()
+        .join("+");
+      if !shortcuts.contains(&shortcut) {
+        shortcuts.push(shortcut);
+      }
+    }
+
+    let label = if shortcuts.is_empty() {
+      "Active".to_string()
+    } else {
+      format!("Active\t{}", shortcuts.join(", "))
+    };
+    self.active_item.with(|item| item.set_text(&label))?;
     Ok(())
   }
 
