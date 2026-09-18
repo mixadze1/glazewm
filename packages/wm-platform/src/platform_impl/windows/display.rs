@@ -59,8 +59,20 @@ impl Display {
 
   /// Implements [`Display::working_area`].
   pub(crate) fn working_area(&self) -> crate::Result<Rect> {
-    let rc = self.monitor_info_ex()?.monitorInfo.rcWork;
-    Ok(Rect::from_ltrb(rc.left, rc.top, rc.right, rc.bottom))
+    let info = self.monitor_info_ex()?.monitorInfo;
+    let bounds = info.rcMonitor;
+    let work = info.rcWork;
+    super::safe_area::working_area(
+      self.hmonitor(),
+      &Rect::from_ltrb(
+        bounds.left,
+        bounds.top,
+        bounds.right,
+        bounds.bottom,
+      ),
+      &Rect::from_ltrb(work.left, work.top, work.right, work.bottom),
+      self.dpi().unwrap_or(96),
+    )
   }
 
   /// Implements [`Display::scale_factor`].

@@ -10,7 +10,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     env:
-      VERSION_NUMBER: 4.0.2
+      VERSION_NUMBER: 4.0.3
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@21dc36fb71dd22e3317045c0c31a3f4249868b17

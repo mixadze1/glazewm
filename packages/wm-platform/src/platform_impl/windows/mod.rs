@@ -5,6 +5,7 @@ mod event_loop;
 mod keyboard_hook;
 mod mouse_listener;
 mod native_window;
+mod safe_area;
 mod single_instance;
 mod window_listener;
 

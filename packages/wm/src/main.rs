@@ -185,6 +185,12 @@ async fn start_wm(
   cleanup_interval
     .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+  // Overlay bars can appear or hide without a Windows work-area event.
+  let mut safe_area_interval =
+    tokio::time::interval(Duration::from_millis(500));
+  safe_area_interval
+    .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
   loop {
     let res = tokio::select! {
       // biased: evaluated top-to-bottom when multiple futures are ready
@@ -225,6 +231,9 @@ async fn start_wm(
         tracing::debug!("Received keyboard event: {:?}", event);
         wm.process_event(PlatformEvent::Keybinding(event), &mut config)
       }
+      _ = safe_area_interval.tick() => {
+        wm.refresh_working_areas(&config)
+      },
       _ = cleanup_interval.tick() => {
         if wm.state.is_paused {
           Ok(())

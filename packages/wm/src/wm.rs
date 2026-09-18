@@ -163,6 +163,44 @@ impl WindowManager {
     Ok(())
   }
 
+  /// Refresh only changed work areas, without the DPI/floating-window
+  /// recentering performed for a full display reconfiguration.
+  pub fn refresh_working_areas(
+    &mut self,
+    config: &UserConfig,
+  ) -> anyhow::Result<()> {
+    let state = &mut self.state;
+    let mut changed = false;
+    for monitor in state.monitors() {
+      let native = monitor.native();
+      let mut properties = monitor.native_properties();
+      // Leave monitor topology changes and transient sleep/wake failures
+      // to the normal display listener.
+      if native.bounds().ok().as_ref() != Some(&properties.bounds) {
+        continue;
+      }
+      let Ok(working_area) = native.working_area() else {
+        continue;
+      };
+      if working_area == properties.working_area {
+        continue;
+      }
+      properties.working_area = working_area;
+      monitor.set_native_properties(properties);
+      state.emit_event(WmEvent::MonitorUpdated {
+        updated_monitor: monitor.to_dto()?,
+      });
+      state.pending_sync.queue_container_to_redraw(monitor);
+      changed = true;
+    }
+    if changed && !state.is_paused {
+      state.pending_sync.suppress_animations();
+      platform_sync(state, config)?;
+      state.animation_manager.ensure_timer_running();
+    }
+    Ok(())
+  }
+
   /// Updates all active animations and redraws windows that are animating.
   pub fn update_animations(
     &mut self,
