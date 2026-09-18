@@ -468,3 +468,61 @@ This is a fork of [glzr-io/glazewm](https://github.com/glzr-io/glazewm). Credit 
 [issues-badge]: https://img.shields.io/github/issues/mixadze1/glazewm-feeling
 [issues-link]: https://github.com/mixadze1/glazewm-feeling/issues
 [demo-video]: resources/assets/feeling-demo.gif
+
+## Инструкции для AI Agent: восстановить мою настройку Windows
+
+Целевая настройка: **GlazeWM Feeling + Zebar**, оба запускаются при входе в Windows из постоянных каталогов в Program Files и работают с приоритетом **AboveNormal / «Выше обычного»**. Проверенная версия Feeling на момент записи — **4.0.5**. Эти инструкции относятся к настройке рабочего стола; применяйте их, когда пользователь просит установить или восстановить эту конфигурацию.
+
+### 1. Установить приложения и сохранить конфигурацию
+
+- Установить **GlazeWM Feeling из релизов этого репозитория**, а не пакет оригинального GlazeWM. Постоянный каталог: `%ProgramFiles%\glzr.io\GlazeWM`. Разместить рядом `glazewm.exe`, `glazewm-cli.exe` и `glazewm-watcher.exe`; сохранить лицензию и документацию из архива.
+- Установить [Zebar](https://github.com/glzr-io/zebar) в `%ProgramFiles%\glzr.io\Zebar`. Исполняемый файл: `zebar.exe`.
+- Перед заменой сделать резервную копию установленных файлов и пользовательских каталогов `%USERPROFILE%\.glzr\glazewm` и `%USERPROFILE%\.glzr\zebar`. Не заменять существующий `config.yaml` примером из релиза.
+- Для точного воспроизведения перенести оба пользовательских каталога из резервной копии: репозиторий не содержит полного личного конфига. Текущий Zebar использует pack `m4rshe1.zebar-rose-pine-pp`, widget `glazewm`, preset `default`; восстановить также файлы пакета, одной записи в `settings.json` недостаточно.
+- Сохранить пользовательские сочетания клавиш. В текущей настройке `Alt + стрелки` меняет фокус, `Alt + Shift + стрелки` перемещает окно. Сохранить анимации.
+- Перед обновлением завершить нужный экземпляр через `glazewm-cli.exe command wm-exit`, дождаться завершения его watcher, затем заменить файлы. Операции в Program Files требуют прав администратора; запускать сами приложения в обычной пользовательской сессии.
+
+### 2. Настроить автозапуск без дубликатов
+
+- **GlazeWM:** включить `Run on system startup` через меню трея установленного экземпляра. Проверить запись `GlazeWM` в `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`: она должна указывать на `"C:\Program Files\glzr.io\GlazeWM\glazewm.exe"` (учесть фактический `%ProgramFiles%`).
+- **Zebar:** создать `Zebar.lnk` в пользовательской папке Startup, полученной через `[Environment]::GetFolderPath('Startup')`. Цель — `%ProgramFiles%\glzr.io\Zebar\zebar.exe`, рабочая папка — каталог Zebar. В этой настройке используется именно ярлык: прежняя запись Run не отображалась в Startup apps.
+- Оставить только один способ запуска Zebar: при наличии ярлыка убрать дублирующую запись Zebar из Run и дублирующий запуск из `startup_commands` GlazeWM. В текущем конфиге `startup_commands: []` и `shutdown_commands: []`; Zebar запускается независимо.
+- Проверить, что обе записи включены в **Task Manager → Startup apps**. Если список был открыт во время настройки, закрыть и открыть Task Manager заново. Не считать наличие записи в реестре достаточной проверкой.
+- Не запускать watcher отдельно: его запускает GlazeWM. Удалить только относящиеся к этим приложениям устаревшие записи, указывающие на временные сборки или `%LOCALAPPDATA%\Programs\GlazeWM-Animations`.
+
+### 3. Установить постоянный приоритет
+
+Для `glazewm.exe` и `zebar.exe` использовать **AboveNormal**, не High или Realtime. В PowerShell **с правами администратора** задать класс приоритета для следующих запусков:
+
+```powershell
+foreach ($exe in @('glazewm.exe', 'zebar.exe')) {
+    $key = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$exe\PerfOptions"
+    New-Item -Path $key -Force | Out-Null
+    New-ItemProperty -LiteralPath $key -Name CpuPriorityClass `
+        -PropertyType DWord -Value 6 -Force | Out-Null
+}
+```
+
+`CpuPriorityClass = 6` в этом разделе реестра означает AboveNormal. Настройка действует на процессы с указанными именами, поэтому проверить, что запускаются нужные установленные приложения. Остальные значения IFEO не менять.
+
+Для уже запущенных приложений применить приоритет отдельно:
+
+```powershell
+Get-Process -Name glazewm,zebar | ForEach-Object {
+    $_.PriorityClass = 'AboveNormal'
+}
+```
+
+Изменение через **Task Manager → Details → Set priority** относится только к текущему процессу. Вкладка **Startup apps** не позволяет менять приоритет. Чтобы отменить постоянную настройку, удалить только добавленные значения `CpuPriorityClass` из двух разделов `PerfOptions`, а текущим процессам вернуть `Normal`.
+
+### 4. Проверить результат
+
+```powershell
+& "$env:ProgramFiles\glzr.io\GlazeWM\glazewm-cli.exe" query app-metadata
+Get-Process -Name glazewm,zebar | Select-Object Name,Id,Path,PriorityClass
+Get-CimInstance Win32_StartupCommand |
+    Where-Object { $_.Name -match 'GlazeWM|Zebar' } |
+    Select-Object Name,Command,Location
+```
+
+Убедиться, что версия Feeling соответствует установленному релизу, пути ведут в Program Files, оба процесса имеют `AboveNormal`, панель Zebar видна, а второй экземпляр GlazeWM не запущен. Окончательно проверить автозапуск и приоритет после следующего входа пользователя в Windows; не выходить из сессии и не перезагружать компьютер без его просьбы. Повышенный приоритет — настройка планировщика, а не доказательство устранения фризов.
