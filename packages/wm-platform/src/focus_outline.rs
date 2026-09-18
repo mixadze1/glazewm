@@ -274,10 +274,8 @@ impl FocusOutline {
     self.state.color = color;
     self.state.width = i32::from(width);
     self.state.last_shape.set(None);
-    unsafe {
-      // Force geometry/region refresh even when only width changed.
-      let _ = ShowWindow(self.hwnd, SW_HIDE);
-    }
+    // Refresh the layered surface in place; hiding it first produces a
+    // visible blink during repeated resize/focus-effect updates.
     self.state.track(self.hwnd);
     Ok(())
   }

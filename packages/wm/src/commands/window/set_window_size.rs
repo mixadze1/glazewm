@@ -21,6 +21,11 @@ pub fn set_window_size(
   state: &mut WmState,
   behavior: &WindowBehaviorConfig,
 ) -> anyhow::Result<()> {
+  if state.binding_modes.iter().any(|mode| mode.name == "resize") {
+    // Held keyboard input already supplies small frame-paced steps.
+    // Animations would keep moving after release and cloak the border.
+    state.pending_sync.suppress_animations();
+  }
   match window {
     WindowContainer::TilingWindow(window) => {
       set_tiling_window_size(

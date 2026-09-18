@@ -163,6 +163,44 @@ impl WindowManager {
     Ok(())
   }
 
+  /// Sample held resize input once per frame. Never replay missed ticks
+  /// or OS autorepeats after release; slow applications reduce speed
+  /// instead of accumulating a backlog of resize commands.
+  pub fn process_held_resize(
+    &mut self,
+    binding: &wm_platform::Keybinding,
+    config: &mut UserConfig,
+  ) -> anyhow::Result<()> {
+    if self.state.is_paused
+      || !self
+        .state
+        .binding_modes
+        .iter()
+        .any(|mode| mode.name == "resize")
+    {
+      return Ok(());
+    }
+    let commands = config
+      .active_keybinding_configs(&self.state.binding_modes, false)
+      .find(|kb| kb.bindings.contains(binding))
+      .map(|kb| kb.commands.clone());
+    if let Some(mut commands) = commands {
+      for command in &mut commands {
+        let InvokeCommand::Resize(args) = command else {
+          return Ok(());
+        };
+        // Four small frames replace one configured keyboard step.
+        for length in
+          [&mut args.width, &mut args.height].into_iter().flatten()
+        {
+          length.amount *= 0.25;
+        }
+      }
+      self.process_commands(&commands, None, config)?;
+    }
+    Ok(())
+  }
+
   /// Refresh only changed work areas, without the DPI/floating-window
   /// recentering performed for a full display reconfiguration.
   pub fn refresh_working_areas(

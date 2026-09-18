@@ -194,6 +194,11 @@ async fn start_wm(
   safe_area_interval
     .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
+  let mut resize_interval =
+    tokio::time::interval(Duration::from_millis(16));
+  resize_interval
+    .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
   loop {
     let res = tokio::select! {
       // biased: evaluated top-to-bottom when multiple futures are ready
@@ -234,6 +239,13 @@ async fn start_wm(
         tracing::debug!("Received keyboard event: {:?}", event);
         wm.process_event(PlatformEvent::Keybinding(event), &mut config)
       }
+      _ = resize_interval.tick() => {
+        if let Some(binding) = keybinding_listener.held_continuous_binding() {
+          wm.process_held_resize(&binding, &mut config)
+        } else {
+          Ok(())
+        }
+      },
       _ = safe_area_interval.tick() => {
         wm.refresh_working_areas(&config)
       },
@@ -293,6 +305,15 @@ async fn start_wm(
               .flat_map(|kb| kb.bindings)
               .collect::<Vec<_>>(),
           );
+
+          let continuous = if !wm.state.is_paused && wm.state.binding_modes
+            .iter().any(|mode| mode.name == "resize") {
+            config.active_keybinding_configs(&wm.state.binding_modes, false)
+              .filter(|kb| !kb.commands.is_empty() && kb.commands.iter()
+                .all(|cmd| matches!(cmd, wm_common::InvokeCommand::Resize(_))))
+              .flat_map(|kb| kb.bindings).collect()
+          } else { Vec::new() };
+          keybinding_listener.set_continuous_bindings(continuous);
 
           mouse_listener.set_enabled_events(
             if config.value.general.focus_follows_cursor {

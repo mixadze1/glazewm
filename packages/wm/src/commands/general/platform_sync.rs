@@ -1237,20 +1237,24 @@ fn sync_live_resize(
   windows: &[WindowContainer],
   state: &mut WmState,
 ) -> anyhow::Result<Vec<uuid::Uuid>> {
+  let keyboard_resize = state.pending_sync.animations_suppressed()
+    && state.binding_modes.iter().any(|mode| mode.name == "resize");
   let is_live_resize = state.windows().iter().any(|window| {
     window.state() == WindowState::Tiling
       && window.active_drag().is_some_and(|drag| {
         drag.operation == Some(wm_common::ActiveDragOperation::Resize)
       })
   });
-  if !is_live_resize {
+  if !is_live_resize && !keyboard_resize {
     return Ok(Vec::new());
   }
   let mut positions = Vec::new();
   let mut updated = Vec::new();
   let mut reveal = Vec::new();
   for window in windows {
-    if window.state() != WindowState::Tiling
+    if !(window.state() == WindowState::Tiling
+      || (keyboard_resize
+        && matches!(window.state(), WindowState::Floating(_))))
       || window.display_state() != DisplayState::Shown
       || !window
         .workspace()

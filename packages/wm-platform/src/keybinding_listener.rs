@@ -69,6 +69,7 @@ impl Keybinding {
 /// A listener for system-wide keybindings.
 #[derive(Debug)]
 pub struct KeybindingListener {
+  continuous: Arc<Mutex<ContinuousBindings>>,
   /// A receiver channel for outgoing keybinding events.
   event_rx: mpsc::UnboundedReceiver<KeybindingEvent>,
 
@@ -98,15 +99,18 @@ impl KeybindingListener {
       Arc::new(Mutex::new(Self::create_keybinding_map(keybindings)));
 
     let enabled = Arc::new(AtomicBool::new(true));
+    let continuous = Arc::new(Mutex::new(ContinuousBindings::default()));
 
     let keyboard_hook = Self::create_keyboard_hook(
       keybinding_map.clone(),
       enabled.clone(),
+      continuous.clone(),
       event_tx,
       dispatcher,
     )?;
 
     Ok(Self {
+      continuous,
       event_rx,
       keybinding_map,
       enabled,
@@ -119,6 +123,22 @@ impl KeybindingListener {
   /// This will block until a keybinding event is available.
   pub async fn next_event(&mut self) -> Option<KeybindingEvent> {
     self.event_rx.recv().await
+  }
+
+  /// Continuous bindings expose current held state, never queued repeats.
+  pub fn set_continuous_bindings(&self, bindings: Vec<Keybinding>) {
+    *self.continuous.lock().unwrap() = ContinuousBindings {
+      bindings,
+      held: None,
+    };
+  }
+
+  pub fn held_continuous_binding(&self) -> Option<Keybinding> {
+    self
+      .enabled
+      .load(Ordering::Relaxed)
+      .then(|| self.continuous.lock().unwrap().held.clone())
+      .flatten()
   }
 
   /// Updates the keybindings for the keybinding listener.
@@ -145,12 +165,17 @@ impl KeybindingListener {
   fn create_keyboard_hook(
     keybinding_map: Arc<Mutex<HashMap<Key, Vec<Keybinding>>>>,
     enabled: Arc<AtomicBool>,
+    continuous: Arc<Mutex<ContinuousBindings>>,
     event_tx: mpsc::UnboundedSender<KeybindingEvent>,
     dispatcher: &Dispatcher,
   ) -> crate::Result<platform_impl::KeyboardHook> {
     platform_impl::KeyboardHook::new(
       move |event: platform_impl::KeyEvent| -> bool {
-        if !enabled.load(Ordering::Relaxed) || !event.is_keypress {
+        if !event.is_keypress {
+          continuous.lock().unwrap().release(event.key);
+          return false;
+        }
+        if !enabled.load(Ordering::Relaxed) {
           return false;
         }
 
@@ -209,7 +234,10 @@ impl KeybindingListener {
           return false;
         }
 
-        let _ = event_tx.send(KeybindingEvent(longest_keybinding.clone()));
+        if !continuous.lock().unwrap().press(longest_keybinding) {
+          let _ =
+            event_tx.send(KeybindingEvent(longest_keybinding.clone()));
+        }
 
         true
       },
@@ -231,6 +259,70 @@ impl KeybindingListener {
     }
 
     keybinding_map
+  }
+}
+
+#[derive(Debug, Default)]
+struct ContinuousBindings {
+  bindings: Vec<Keybinding>,
+  held: Option<Keybinding>,
+}
+
+impl ContinuousBindings {
+  fn press(&mut self, binding: &Keybinding) -> bool {
+    if self.bindings.contains(binding) {
+      self.held = Some(binding.clone());
+      true
+    } else {
+      self.held = None;
+      false
+    }
+  }
+
+  fn release(&mut self, key: Key) {
+    if self
+      .held
+      .as_ref()
+      .is_some_and(|binding| binding.keys().contains(&key))
+    {
+      self.held = None;
+    }
+  }
+}
+
+#[cfg(test)]
+mod continuous_tests {
+  use super::*;
+
+  #[test]
+  fn autorepeats_do_not_accumulate_and_release_stops_immediately() {
+    let binding = Keybinding::new(vec![Key::Right]).unwrap();
+    let mut state = ContinuousBindings {
+      bindings: vec![binding.clone()],
+      held: None,
+    };
+    for _ in 0..1000 {
+      assert!(state.press(&binding));
+    }
+    assert_eq!(state.held, Some(binding));
+    state.release(Key::Right);
+    assert_eq!(state.held, None);
+  }
+
+  #[test]
+  fn reversing_replaces_held_direction_and_mode_exit_cancels_it() {
+    let left = Keybinding::new(vec![Key::Left]).unwrap();
+    let right = Keybinding::new(vec![Key::Right]).unwrap();
+    let mut state = ContinuousBindings {
+      bindings: vec![left.clone(), right.clone()],
+      held: None,
+    };
+    state.press(&left);
+    state.press(&right);
+    state.release(Key::Left);
+    assert_eq!(state.held, Some(right));
+    assert!(!state.press(&Keybinding::new(vec![Key::Escape]).unwrap()));
+    assert_eq!(state.held, None);
   }
 }
 
