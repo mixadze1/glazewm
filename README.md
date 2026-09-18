@@ -1,21 +1,21 @@
 <div align="center">
 
-> Version 4.0.4 is available: [download the Windows x64 release](https://github.com/mixadze1/glazewm_reborn/releases/latest).
+> Version 4.0.4 is available: [download the Windows x64 release](https://github.com/mixadze1/glazewm-feeling/releases/latest).
 
   <br>
   <img src="./resources/assets/logo.svg" width="230" alt="GlazeWM logo" />
   <br>
 
-# GlazeWM Reborn
+# GlazeWM Feeling
 
-**The idea behind Reborn: give window management a better feel.**
+**The idea behind Feeling: give window management a better feel.**
 
-Reborn is a Windows-focused fork of GlazeWM built around the way your desktop **moves, responds, and feels**. Workspace transitions carry their motion through rapid direction changes. Windows travel toward their destination. Resize controls follow your held keys, and focus outlines make the current mode visible. The goal of version 4 is to make everyday tiling feel more connected and responsive.
+Feeling is a Windows-focused fork of GlazeWM built around the way your desktop **moves, responds, and feels**. Workspace transitions carry their motion through rapid direction changes. Windows travel toward their destination. Resize controls follow your held keys, and focus outlines make the current mode visible. The goal of version 4 is to make everyday tiling feel more connected and responsive.
 
 [![Downloads][downloads-badge]][downloads-link]
 [![Issues][issues-badge]][issues-link]
 
-Built on [GlazeWM by glzr-io](https://github.com/glzr-io/glazewm), the keyboard-driven tiling window manager inspired by i3wm. Reborn keeps its YAML configuration and keyboard workflow while adding motion, visual feedback, and layout refinements. The executable and configuration names remain compatible with GlazeWM.
+Built on [GlazeWM by glzr-io](https://github.com/glzr-io/glazewm), the keyboard-driven tiling window manager inspired by i3wm. Feeling keeps its YAML configuration and keyboard workflow while adding motion, visual feedback, and layout refinements. The executable and configuration names remain compatible with GlazeWM.
 
 [Installation](#installation) •
 [Version 4 history](#version-4-history) •
@@ -24,7 +24,7 @@ Built on [GlazeWM by glzr-io](https://github.com/glzr-io/glazewm), the keyboard-
 [FAQ](#faq) •
 [Contributing](CONTRIBUTING.md)
 
-![GlazeWM Reborn 4 demo: workspace motion, keyboard resizing, and focus outlines][demo-video]
+![GlazeWM Feeling 4 demo: workspace motion, keyboard resizing, and focus outlines][demo-video]
 
 </div>
 
@@ -36,7 +36,7 @@ Built on [GlazeWM by glzr-io](https://github.com/glzr-io/glazewm), the keyboard-
 - Portable Windows x64 release with no console window for the application or watcher
 - Integration with [Zebar](https://github.com/glzr-io/zebar) as a status bar
 
-### What's new in Reborn
+### What's new in Feeling
 
 - Workspace and window motion is part of the interaction: transitions preserve continuity when you change direction or choose another destination mid-animation.
 - Focus outlines follow rounded window corners with antialiased edges and configurable thickness.
@@ -60,18 +60,18 @@ Built on [GlazeWM by glzr-io](https://github.com/glzr-io/glazewm), the keyboard-
 
 ## Version 4 history
 
-Version 4 is the Reborn line: a series of changes focused on the **feeling of using a tiling desktop**, from movement between workspaces to the feedback around a single window.
+Version 4 is the Feeling line: a series of changes focused on the **feeling of using a tiling desktop**, from movement between workspaces to the feedback around a single window.
 
 | Release | What changed |
 | --- | --- |
-| [4.0.0 — The Reborn foundation](https://github.com/mixadze1/glazewm_reborn/releases/tag/v4.0.0) | Animated workspace slides with continuous position and velocity when retargeting or reversing; visible intermediate workspaces; directional window transfers with an exit and reveal; configurable duration and easing. Also improved live mouse resizing, minimum-size handling, directional move sizing, and focused-window outlines. |
-| [4.0.2 — Clear active state](https://github.com/mixadze1/glazewm_reborn/releases/tag/v4.0.2) | Added the Active tray checkmark, synchronized with the pause shortcut, so tiling can be toggled from either the keyboard or the tray. |
-| [4.0.3 — A desktop that adapts](https://github.com/mixadze1/glazewm_reborn/releases/tag/v4.0.3) | Added automatic safe areas for visible edge bars and the Windows taskbar. The layout adapts as panels appear, disappear, or change size, while preserving configured outer gaps. |
-| [4.0.4 — More direct control](https://github.com/mixadze1/glazewm_reborn/releases/tag/v4.0.4) | Added rounded, antialiased outlines and a separate resize-mode color; removed borders while paused; preserved the selected tiling direction; replaced queued resize autorepeats with held-key updates that keep the outline visible. The default resize step is 2%. |
+| [4.0.0 — The Feeling foundation](https://github.com/mixadze1/glazewm-feeling/releases/tag/v4.0.0) | Animated workspace slides with continuous position and velocity when retargeting or reversing; visible intermediate workspaces; directional window transfers with an exit and reveal; configurable duration and easing. Also improved live mouse resizing, minimum-size handling, directional move sizing, and focused-window outlines. |
+| [4.0.2 — Clear active state](https://github.com/mixadze1/glazewm-feeling/releases/tag/v4.0.2) | Added the Active tray checkmark, synchronized with the pause shortcut, so tiling can be toggled from either the keyboard or the tray. |
+| [4.0.3 — A desktop that adapts](https://github.com/mixadze1/glazewm-feeling/releases/tag/v4.0.3) | Added automatic safe areas for visible edge bars and the Windows taskbar. The layout adapts as panels appear, disappear, or change size, while preserving configured outer gaps. |
+| [4.0.4 — More direct control](https://github.com/mixadze1/glazewm-feeling/releases/tag/v4.0.4) | Added rounded, antialiased outlines and a separate resize-mode color; removed borders while paused; preserved the selected tiling direction; replaced queued resize autorepeats with held-key updates that keep the outline visible. The default resize step is 2%. |
 
 ## Installation
 
-1. Download `glazewm-v4.0.4-windows-x64.zip` from the [Reborn releases](https://github.com/mixadze1/glazewm_reborn/releases/latest).
+1. Download `glazewm-v4.0.4-windows-x64.zip` from the [Feeling releases](https://github.com/mixadze1/glazewm-feeling/releases/latest).
 2. Extract the entire archive into one directory.
 3. Close any existing GlazeWM instance, then launch `glazewm.exe`.
 
@@ -94,7 +94,7 @@ The executables are written to `target/release`. The main application and watche
 
 Help fix something that annoys you, or add a feature you've been wanting for a long time! Contributions are very welcome.
 
-Local development and guidelines are available in the [contributing guide](CONTRIBUTING.md). Report fork-specific problems in [this repository's issues](https://github.com/mixadze1/glazewm_reborn/issues).
+Local development and guidelines are available in the [contributing guide](CONTRIBUTING.md). Report fork-specific problems in [this repository's issues](https://github.com/mixadze1/glazewm-feeling/issues).
 
 ## Default keybindings
 
@@ -108,7 +108,7 @@ The [sample configuration](resources/assets/sample-config.yaml) is the source of
 
 The [default config](resources/assets/sample-config.yaml) file is generated at `%userprofile%\.glzr\glazewm\config.yaml`.
 
-### Reborn animations
+### Feeling animations
 
 Merge these settings into your existing configuration rather than replacing it:
 
@@ -460,8 +460,8 @@ This isn't currently supported, however, the keybinding `alt+shift+p` in the def
 
 This is a fork of [glzr-io/glazewm](https://github.com/glzr-io/glazewm). Credit for the original application, logo, demo, and inherited documentation belongs to the upstream authors and contributors. Distributed under [GPL-3.0](LICENSE.md).
 
-[downloads-badge]: https://img.shields.io/github/downloads/mixadze1/glazewm_reborn/total?logo=github&logoColor=white
-[downloads-link]: https://github.com/mixadze1/glazewm_reborn/releases
-[issues-badge]: https://img.shields.io/github/issues/mixadze1/glazewm_reborn
-[issues-link]: https://github.com/mixadze1/glazewm_reborn/issues
-[demo-video]: resources/assets/reborn-demo.gif
+[downloads-badge]: https://img.shields.io/github/downloads/mixadze1/glazewm-feeling/total?logo=github&logoColor=white
+[downloads-link]: https://github.com/mixadze1/glazewm-feeling/releases
+[issues-badge]: https://img.shields.io/github/issues/mixadze1/glazewm-feeling
+[issues-link]: https://github.com/mixadze1/glazewm-feeling/issues
+[demo-video]: resources/assets/feeling-demo.gif
