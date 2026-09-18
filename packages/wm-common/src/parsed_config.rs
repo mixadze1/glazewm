@@ -240,11 +240,29 @@ pub struct WindowEffectsConfig {
   /// add a click-through outline; 0/1 keep the native border only.
   pub focused_border_width: u16,
 
+  /// Optional focused border color while the `resize` binding mode is
+  /// active. When omitted, use the normal focused border color.
+  pub resize_border_color: Option<Color>,
+
   /// Visual effects to apply to the focused window.
   pub focused_window: WindowEffectConfig,
 
   /// Visual effects to apply to non-focused windows.
   pub other_windows: WindowEffectConfig,
+}
+
+impl WindowEffectsConfig {
+  pub fn focused_border_color(
+    &self,
+    modes: &[BindingModeConfig],
+  ) -> &Color {
+    if modes.iter().any(|mode| mode.name == "resize") {
+      if let Some(color) = &self.resize_border_color {
+        return color;
+      }
+    }
+    &self.focused_window.border.color
+  }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

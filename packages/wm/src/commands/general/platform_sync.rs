@@ -79,9 +79,15 @@ pub fn platform_sync(
     jump_cursor(focused_container.clone(), state, config)?;
   }
 
-  if state.pending_sync.needs_focused_effect_update()
-    || state.pending_sync.needs_all_effects_update()
+  if !state.is_paused
+    && (state.pending_sync.needs_focused_effect_update()
+      || state.pending_sync.needs_all_effects_update())
   {
+    #[cfg(target_os = "windows")]
+    {
+      let mut generation = state.border_effect_generation.lock().unwrap();
+      *generation = generation.wrapping_add(1);
+    }
     // Keep reference to the previous window that had focus effects
     // applied.
     let prev_effects_window = state.prev_effects_window.clone();
@@ -89,7 +95,7 @@ pub fn platform_sync(
     sync_focus_outline(&focused_container, state, config);
 
     if let Ok(window) = focused_container.as_window_container() {
-      apply_window_effects(&window, true, config);
+      apply_window_effects(&window, true, config, state);
       state.prev_effects_window = Some(window.clone());
     } else {
       state.prev_effects_window = None;
@@ -109,7 +115,7 @@ pub fn platform_sync(
       .filter(|window| window.id() != focused_container.id());
 
     for window in unfocused_windows {
-      apply_window_effects(&window, false, config);
+      apply_window_effects(&window, false, config, state);
     }
 
     // Re-apply animation-driven opacity for the focused window if an
@@ -1489,6 +1495,8 @@ fn apply_window_effects(
   window: &WindowContainer,
   is_focused: bool,
   config: &UserConfig,
+  #[cfg_attr(not(target_os = "windows"), allow(unused_variables))]
+  state: &WmState,
 ) {
   let window_effects = &config.value.window_effects;
 
@@ -1505,7 +1513,13 @@ fn apply_window_effects(
   if window_effects.focused_window.border.enabled
     || window_effects.other_windows.border.enabled
   {
-    apply_border_effect(window, effect_config);
+    let mut border_effect = effect_config.clone();
+    if is_focused {
+      border_effect.border.color = window_effects
+        .focused_border_color(&state.binding_modes)
+        .clone();
+    }
+    apply_border_effect(window, &border_effect, state);
   }
 
   #[cfg(target_os = "windows")]
@@ -1534,6 +1548,7 @@ fn apply_window_effects(
 fn apply_border_effect(
   window: &WindowContainer,
   effect_config: &WindowEffectConfig,
+  state: &WmState,
 ) {
   let border_color = if effect_config.border.enabled {
     Some(&effect_config.border.color)
@@ -1545,12 +1560,17 @@ fn apply_border_effect(
 
   let native = window.native().clone();
   let border_color = border_color.cloned();
+  let generation = state.border_effect_generation.clone();
+  let expected_generation = *generation.lock().unwrap();
 
   // Re-apply border color after a short delay to better handle
   // windows that change it themselves.
   tokio::task::spawn(async move {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    _ = native.set_border_color(border_color.as_ref());
+    let current_generation = generation.lock().unwrap();
+    if *current_generation == expected_generation {
+      _ = native.set_border_color(border_color.as_ref());
+    }
   });
 }
 

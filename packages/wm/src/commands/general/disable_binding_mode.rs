@@ -9,6 +9,7 @@ pub fn disable_binding_mode(name: &str, state: &mut WmState) {
     .filter(|config| config.name != name)
     .cloned()
     .collect::<Vec<_>>();
+  state.pending_sync.queue_focused_effect_update();
 
   state.emit_event(WmEvent::BindingModesChanged {
     new_binding_modes: state.binding_modes.clone(),

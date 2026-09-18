@@ -163,6 +163,8 @@ gaps:
 window_effects:
   # Windows focus outline, in physical pixels (1 = native thin border).
   focused_border_width: 3
+  # Focused border color while resize mode (Alt+R) is active.
+  resize_border_color: "#ffff00"
   # Visual effects to apply to the focused window.
   focused_window:
     # Highlight the window with a colored border.

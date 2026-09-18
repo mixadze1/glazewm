@@ -110,6 +110,44 @@ mod tests {
     let legacy: wm_common::ParsedConfig =
       serde_yaml::from_str("{}").unwrap();
     assert_eq!(legacy.window_effects.focused_border_width, 0);
+    assert!(legacy.window_effects.resize_border_color.is_none());
+  }
+
+  #[test]
+  fn resize_border_color_restores_normal_color_and_supports_legacy_config()
+  {
+    let config: wm_common::ParsedConfig = serde_yaml::from_str(
+      include_str!("../../../../../resources/assets/sample-config.yaml"),
+    )
+    .unwrap();
+    let effects = &config.window_effects;
+    let resize = config
+      .binding_modes
+      .iter()
+      .find(|mode| mode.name == "resize")
+      .unwrap()
+      .clone();
+    let color =
+      effects.focused_border_color(std::slice::from_ref(&resize));
+    assert_eq!((color.r, color.g, color.b), (255, 255, 0));
+    assert!(std::ptr::eq(
+      effects.focused_border_color(&[]),
+      &effects.focused_window.border.color,
+    ));
+    let other_mode = wm_common::BindingModeConfig {
+      name: "other".into(),
+      ..resize.clone()
+    };
+    assert!(std::ptr::eq(
+      effects.focused_border_color(&[other_mode]),
+      &effects.focused_window.border.color,
+    ));
+    let legacy: wm_common::ParsedConfig =
+      serde_yaml::from_str("{}").unwrap();
+    assert!(std::ptr::eq(
+      legacy.window_effects.focused_border_color(&[resize]),
+      &legacy.window_effects.focused_window.border.color,
+    ));
   }
 }
 

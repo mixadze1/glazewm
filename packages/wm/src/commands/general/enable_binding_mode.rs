@@ -18,6 +18,7 @@ pub fn enable_binding_mode(
     })?;
 
   state.binding_modes = vec![binding_mode.clone()];
+  state.pending_sync.queue_focused_effect_update();
 
   state.emit_event(WmEvent::BindingModesChanged {
     new_binding_modes: state.binding_modes.clone(),

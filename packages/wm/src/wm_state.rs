@@ -63,6 +63,11 @@ pub struct WmState {
   pub focus_outline:
     Option<wm_platform::ThreadBound<wm_platform::FocusOutline>>,
 
+  /// Invalidates delayed native border writes when effects change or
+  /// pause.
+  #[cfg(target_os = "windows")]
+  pub border_effect_generation: std::sync::Arc<std::sync::Mutex<u64>>,
+
   /// Time since a previously focused window was unmanaged or minimized.
   ///
   /// Used to decide whether to override incoming focus events.
@@ -109,6 +114,8 @@ impl WmState {
       prev_effects_window: None,
       #[cfg(target_os = "windows")]
       focus_outline: None,
+      #[cfg(target_os = "windows")]
+      border_effect_generation: Default::default(),
       recent_workspace_name: None,
       unmanaged_or_minimized_timestamp: None,
       binding_modes: Vec::new(),

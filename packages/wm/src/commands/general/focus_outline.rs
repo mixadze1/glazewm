@@ -24,7 +24,7 @@ pub(super) fn sync_focus_outline(
     state.focus_outline = None;
     return;
   };
-  let color = effects.focused_window.border.color.clone();
+  let color = effects.focused_border_color(&state.binding_modes).clone();
   let width = effects.focused_border_width;
   let native = window.native().clone();
   let result = if let Some(outline) = &mut state.focus_outline {
