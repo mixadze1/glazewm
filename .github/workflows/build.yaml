@@ -9,7 +9,7 @@ on:
         description: (Windows only) Enable UIAccess in the application manifest.
       version_number:
         type: string
-        default: '4.0.3'
+        default: '4.0.4'
         description: Version number to use for the build.
 
 jobs:
